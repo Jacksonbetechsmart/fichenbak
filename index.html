@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BeTechSmart — Fichenbak</title>
+<meta name="theme-color" content="#14161A">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fichenbak">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: { extend: {
+      colors: {
+        bts: {
+          /* === BeTechSmart huisstijl-accent (ORANJE). Pas hier je exacte hex aan. === */
+          orange:'#F26A21', orangeDark:'#D2540E',
+          ink:'#14161A', panel:'#1B1F26', panel2:'#232833', line:'#333A47',
+          paper:'#F4EEDF', paper2:'#EDE4CD',
+        }
+      },
+      fontFamily: {
+        display:['"Space Grotesk"','system-ui','sans-serif'],
+        body:['"Inter"','system-ui','sans-serif'],
+        mono:['"JetBrains Mono"','ui-monospace','monospace'],
+      }
+    }}
+  }
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f1115; }
+
+  .bak-shell{
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.04), rgba(0,0,0,.25)),
+      repeating-linear-gradient(90deg,#3a2a1c 0px,#4a3624 6px,#3f2e1f 12px,#4d3826 18px);
+    border:1px solid #211712;
+    box-shadow: inset 0 2px 0 rgba(255,255,255,.06), inset 0 -14px 26px rgba(0,0,0,.55), 0 22px 40px -20px rgba(0,0,0,.9);
+  }
+  .bak-rail{
+    background:linear-gradient(180deg,#c9ced6,#9aa1ac 40%,#6f7681);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.7), inset 0 -2px 4px rgba(0,0,0,.4), 0 2px 6px rgba(0,0,0,.5);
+  }
+
+  /* Papieren fiche = dunne kaart; gestapeld achter elkaar, enkel de bovenrand zichtbaar */
+  .fiche{
+    background: linear-gradient(180deg,#faf6ea,#f1e9d4);
+    color:#20242b; position:relative;
+    transition: transform .26s cubic-bezier(.2,.9,.25,1.2), box-shadow .26s ease, opacity .2s ease, filter .2s ease;
+    will-change: transform;
+    box-shadow: 0 -1px 0 rgba(0,0,0,.10), 0 1px 0 rgba(255,255,255,.7) inset, 0 6px 12px -8px rgba(0,0,0,.55);
+  }
+  .fiche{ scroll-margin-top: 150px; scroll-margin-bottom: 40px; }
+  .fiche:hover{ transform: translateY(-4px); z-index:20; box-shadow:0 16px 24px -12px rgba(0,0,0,.6); }
+  .fiche.lifted{
+    transform: scale(1.03);
+    box-shadow: 0 24px 40px -14px rgba(0,0,0,.7), 0 0 0 3px rgba(242,106,33,.95), 0 0 40px rgba(242,106,33,.4);
+    z-index:40;
+  }
+  .fiche.lifted:hover{ transform: scale(1.035); }
+  .fiche.dimmed{ opacity:.32; filter:saturate(.5); transform:scale(.98); }
+  .fiche.dragging{ opacity:.5; transform:rotate(2deg) scale(1.03); z-index:40; }
+
+  .bak-drop-active{ outline:2px dashed rgba(242,106,33,.85); outline-offset:-8px; background-color:rgba(242,106,33,.06); }
+
+  .scroll-thin::-webkit-scrollbar{ width:8px; height:8px; }
+  .scroll-thin::-webkit-scrollbar-thumb{ background:#3a4150; border-radius:8px; }
+  .scroll-thin::-webkit-scrollbar-track{ background:transparent; }
+
+  @keyframes popIn { from{opacity:0; transform:translateY(8px) scale(.98)} to{opacity:1; transform:none} }
+  .pop{ animation:popIn .18s ease-out both; }
+
+  @media (prefers-reduced-motion: reduce){
+    .fiche, .fiche.lifted, .fiche:hover{ transition:none !important; }
+  }
+</style>
+</head>
+<body class="font-body text-slate-200">
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+/* =========================================================================
+   1. CONFIGURATIE
+   ========================================================================= */
+
+const KLEUREN = {
+  groen:  { hex:'#25C167', naam:'nieuw' },
+  oranje: { hex:'#F59E0B', naam:'actie nodig' },
+  blauw:  { hex:'#3B82F6', naam:'offerte' },
+  rood:   { hex:'#EF4444', naam:'dringend' },
+  grijs:  { hex:'#9CA3AF', naam:'afgewerkt/verloren' },
+};
+
+const STATUSSEN = [
+  { id:'Nieuwe aanvraag', kleur:'groen' },
+  { id:'Startmail gestuurd', kleur:'oranje' },
+  { id:'Wachten op plannen', kleur:'oranje' },
+  { id:'Plannen ontvangen', kleur:'oranje' },
+  { id:'Offerte maken', kleur:'oranje' },
+  { id:'Offerte verstuurd', kleur:'blauw' },
+  { id:'Reminder sturen', kleur:'rood' },
+  { id:'Bellen', kleur:'rood' },
+  { id:'Afspraak showroom', kleur:'blauw' },
+  { id:'Gewonnen', kleur:'groen' },
+  { id:'Verloren', kleur:'grijs' },
+  { id:'Afgewerkt', kleur:'grijs' },
+];
+const STATUS_MAP = Object.fromEntries(STATUSSEN.map(s => [s.id, s]));
+const kleurVanStatus = (s) => KLEUREN[(STATUS_MAP[s]||{}).kleur || 'grijs'];
+
+const BAKKEN = [
+  { id:'nieuw', titel:'Nieuwe aanvragen', sub:'Leads & toekomstige klanten' },
+  { id:'lopend', titel:'Lopende projecten', sub:'In behandeling' },
+  { id:'afgewerkt', titel:'Afgewerkte klanten', sub:'Gewonnen · verloren · klaar' },
+];
+const BAK_MAP = Object.fromEntries(BAKKEN.map(b=>[b.id,b]));
+
+const BRONNEN      = ['webshop','mail','beurs','mond-aan-mond','bestaande klant','Wix','Vecolux'];
+const TYPES_KLANT  = ['particulier','installateur','architect','bedrijf'];
+const PROJECTTYPES = ['nieuwbouw','renovatie','KNX','Zennio','ComfortClick','kastbouw','materiaalverkoop'];
+const LEVERANCIERS = ['Vecolux','Cebeo','Andere'];
+const UURTARIEF_STD = 60;              // standaard € per werkuur
+const FICHE_OVERLAP = 16;              // overlap van de gestapelde fiches (px). Hoger = strakker gestapeld.
+
+function bakVoorStatus(status){
+  if (['Nieuwe aanvraag'].includes(status)) return 'nieuw';
+  if (['Gewonnen','Verloren','Afgewerkt'].includes(status)) return 'afgewerkt';
+  return 'lopend';
+}
+
+/* =========================================================================
+   2. HULPFUNCTIES
+   ========================================================================= */
+
+const LS_KEY = 'bts_fichenbak_v1';
+
+const storage = (() => {
+  let mem = {}; let ok = false;
+  try { const k='__t'; window.localStorage.setItem(k,'1'); window.localStorage.removeItem(k); ok=true; } catch(e){ ok=false; }
+  return {
+    persistent: ok,
+    get(key){ try { return ok ? window.localStorage.getItem(key) : (mem[key] ?? null); } catch(e){ return mem[key] ?? null; } },
+    set(key,val){ try { ok ? window.localStorage.setItem(key,val) : (mem[key]=val); } catch(e){ mem[key]=val; } },
+  };
+})();
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+const vandaag = () => new Date().toISOString().slice(0,10);
+function plusDagen(dagen, van){ const d = van ? new Date(van) : new Date(); d.setDate(d.getDate()+dagen); return d.toISOString().slice(0,10); }
+function toonDatum(iso){ if(!iso) return ''; const [y,m,d] = iso.split('-'); return d+'/'+m+'/'+y; }
+function parseNlDatum(s){
+  if(!s) return '';
+  const m = s.trim().match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
+  if(!m) return s;
+  const d=m[1], mm=m[2], y=m[3]; const yy = y.length===2 ? '20'+y : y;
+  return yy+'-'+mm.padStart(2,'0')+'-'+d.padStart(2,'0');
+}
+const euro = (n) => (n||n===0) ? '€ ' + Number(n).toLocaleString('nl-BE',{maximumFractionDigits:2}) : '';
+
+// Kostprijs van één aanpassings-regel = materiaal (aankoop) + werkuren × tarief
+function rijKost(l){
+  const uur = (l.uurtarief===''||l.uurtarief==null) ? UURTARIEF_STD : (Number(l.uurtarief)||0);
+  return (Number(l.materiaal)||0) + (Number(l.werkuren)||0) * uur;
+}
+// Verkoop (offerte) van één aanpassings-regel = materiaal + marge% + werkuren × tarief
+function aanpVerkoop(l){
+  const uur = (l.uurtarief===''||l.uurtarief==null) ? UURTARIEF_STD : (Number(l.uurtarief)||0);
+  return (Number(l.materiaal)||0) * (1 + (Number(l.marge)||0)/100) + (Number(l.werkuren)||0) * uur;
+}
+
+// Rendement + facturatie van een werf
+function rendement(f){
+  const eo = f.eersteOfferte || {};
+  const btw = (eo.btw===''||eo.btw==null) ? 21 : (Number(eo.btw)||0);
+  const offerteExcl = Number(eo.prijs)||0;
+  const uitbreidingenExcl = (f.uitbreidingen||[]).reduce((s,u)=> s + (Number(u.prijs)||0), 0);
+  const lijnen = f.aanpassingen || [];
+  const aanpVerkoopTot = lijnen.reduce((s,l)=> s + aanpVerkoop(l), 0);   // verkoop van alle aanpassingen
+
+  const omzet    = offerteExcl + uitbreidingenExcl;                     // = projecttotaal excl. BTW (offerte + uitbreidingen)
+  const omzetIncl= omzet * (1 + btw/100);                               // projecttotaal incl. BTW
+
+  const materiaal = lijnen.reduce((s,l)=> s + (Number(l.materiaal)||0), 0);              // aankoop (kost)
+  const materiaalMetMarge = lijnen.reduce((s,l)=> s + (Number(l.materiaal)||0)*(1+(Number(l.marge)||0)/100), 0);
+  const materiaalMarge = materiaalMetMarge - materiaal;                                  // winst op materiaal
+  const arbeid    = lijnen.reduce((s,l)=>{ const uur=(l.uurtarief===''||l.uurtarief==null)?UURTARIEF_STD:(Number(l.uurtarief)||0); return s + (Number(l.werkuren)||0)*uur; }, 0);
+  const kosten = materiaal + arbeid;
+
+  const winst = omzet - kosten + materiaalMarge;                        // omzet − (materiaal aankoop + uren) + marge op materiaal
+  const marge = omzet>0 ? (winst/omzet*100) : 0;
+
+  const voorschottenExcl = (f.voorschotten||[]).reduce((s,v)=> s + (Number(v.bedrag)||0), 0);   // ingevoerd = excl. BTW
+  const voorschottenIncl = voorschottenExcl * (1 + btw/100);
+  const projecttotaal = omzetIncl;                                       // incl btw
+  const rest          = projecttotaal - voorschottenIncl;
+
+  return {btw, offerteExcl, offerteIncl:offerteExcl*(1+btw/100), uitbreidingenExcl, aanpVerkoopTot, omzet, omzetIncl,
+          materiaal, materiaalMetMarge, materiaalMarge, arbeid, kosten, winst, marge,
+          voorschottenIncl, voorschottenExcl, projecttotaal, rest};
+}
+
+// Fichenummer: haal jaar + volgnummer uit "2026-316"
+function ficheSeq(nummer){ const m=(nummer||'').toString().trim().match(/^(\d{4})-0*(\d+)$/); return m?{jaar:m[1], seq:parseInt(m[2])}:null; }
+function ficheJaar(f){ const s=ficheSeq(f.fichenummer); if(s) return s.jaar; if(f.datumAanvraag) return f.datumAanvraag.slice(0,4); return '—'; }
+
+// Document openen (dataUrl -> blob -> nieuw tabblad; of een http-link)
+function dataUrlNaarBlob(dataUrl){
+  const [head, b64] = dataUrl.split(',');
+  const mime = (head.match(/:(.*?);/)||[])[1] || 'application/octet-stream';
+  const bin = atob(b64); const arr = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  return new Blob([arr], {type:mime});
+}
+function openDoc(d){
+  if(d && d.dataUrl){
+    try { const url=URL.createObjectURL(dataUrlNaarBlob(d.dataUrl)); window.open(url,'_blank'); setTimeout(()=>URL.revokeObjectURL(url),60000); }
+    catch(e){ window.open(d.dataUrl,'_blank'); }
+  } else {
+    const link = (d && (d.link||d.naam)) || '';
+    if(/^https?:\/\//i.test(link)) window.open(link,'_blank');
+    else alert('Dit item bevat geen bestand of geldige link om te openen.');
+  }
+}
+
+// Afbeelding inlezen + verkleinen (kleiner opslaan in localStorage)
+function leesEnVerklein(file, maxDim, cb){
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let w=img.width, h=img.height;
+      if(w>h && w>maxDim){ h=Math.round(h*maxDim/w); w=maxDim; }
+      else if(h>maxDim){ w=Math.round(w*maxDim/h); h=maxDim; }
+      const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      cb(c.toDataURL('image/jpeg',0.72));
+    };
+    img.src=e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function parseCSV(text){
+  const rows=[]; let row=[], cur='', q=false;
+  const sep = (text.split('\n')[0].split(';').length > text.split('\n')[0].split(',').length) ? ';' : ',';
+  for(let i=0;i<text.length;i++){ const c=text[i];
+    if(q){ if(c==='"' && text[i+1]==='"'){ cur+='"'; i++; } else if(c==='"'){ q=false; } else cur+=c; }
+    else { if(c==='"') q=true; else if(c===sep){ row.push(cur); cur=''; } else if(c==='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; } else if(c==='\r'){} else cur+=c; }
+  }
+  if(cur.length||row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r => r.some(x => (x||'').trim()!==''));
+}
+function toCSV(fiches){
+  const cols = ['fichenummer','naam','bedrijf','adres','postcode','gemeente','email','telefoon','datumAanvraag','datumShowroom','bron','typeKlant','projecttype','waarde','status','bak','volgendeActie','datumVolgendeActie','reclamebord','googleReview','notities'];
+  const extra = ['omzet','materiaal','arbeid','winst','offerteIncl','projecttotaal','voorschotten','rest'];
+  const esc = (v)=>{ v=(v==null?'':v).toString(); return /[";\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+  const head = [...cols, ...extra].join(';');
+  const body = fiches.map(f => {
+    const r = rendement(f);
+    return [...cols.map(c => esc(f[c])), r.omzet, r.materiaal, r.arbeid, r.winst, Math.round(r.offerteIncl), Math.round(r.projecttotaal), r.voorschottenIncl, Math.round(r.rest)].join(';');
+  }).join('\n');
+  return head+'\n'+body;
+}
+
+/* =========================================================================
+   3. VOORBEELDDATA
+   ========================================================================= */
+
+const NIEUW_VELDEN = { foto:'', datumShowroom:'', eersteOfferte:{nummer:'',datum:'',omschrijving:'',prijs:'',btw:21}, uitbreidingen:[], aanpassingen:[], voorschotten:[], reclamebord:false, googleReview:false };
+
+function seedData(){
+  return [
+    { id:uid(), fichenummer:'28', naam:'Robbe Van Lerberghe', bedrijf:'', adres:'',
+      postcode:'9160', gemeente:'Lokeren', email:'robbevl@gmail.com', telefoon:'0477 55 44 48',
+      datumAanvraag:'2026-06-05', bron:'Wix', typeKlant:'particulier', projecttype:'KNX',
+      waarde:'', status:'Reminder sturen', bak:'lopend',
+      volgendeActie:'Reminder opvolgen', datumVolgendeActie:vandaag(), notities:'',
+      ...NIEUW_VELDEN,
+      historiek:[
+        {id:uid(), datum:'2026-06-05', tekst:'Mail naar BTS gestuurd'},
+        {id:uid(), datum:'2026-06-10', tekst:'Geantwoord'},
+        {id:uid(), datum:'2026-06-15', tekst:'Reminder'},
+      ], documenten:[] },
+
+    { id:uid(), fichenummer:'30', naam:'Jeroen Meybosch', bedrijf:'', adres:'',
+      postcode:'2500', gemeente:'Lier', email:'jeroen.meybosch@proton.me', telefoon:'+32 494 75 05 99',
+      datumAanvraag:'2026-06-22', bron:'Vecolux', typeKlant:'particulier', projecttype:'KNX',
+      waarde:'', status:'Offerte verstuurd', bak:'lopend',
+      volgendeActie:'Reminder na offerte', datumVolgendeActie:'2026-06-30', notities:'',
+      ...NIEUW_VELDEN,
+      historiek:[
+        {id:uid(), datum:'2026-06-22', tekst:'Plannen doorgestuurd'},
+        {id:uid(), datum:'2026-06-23', tekst:'Offerte'},
+        {id:uid(), datum:'2026-06-30', tekst:'Reminder'},
+      ], documenten:[] },
+
+    { id:uid(), fichenummer:'33', naam:'Koen de Vulder', bedrijf:'', adres:'',
+      postcode:'9230', gemeente:'Wetteren', email:'devulderk@gmail.com', telefoon:'0488 40 31 89',
+      datumAanvraag:'2026-06-23', bron:'Vecolux', typeKlant:'particulier', projecttype:'KNX',
+      waarde:'', status:'Afspraak showroom', bak:'lopend',
+      volgendeActie:'Opvolgen 2de offerte', datumVolgendeActie:vandaag(), notities:'Heeft tekentool gemaakt!!',
+      ...NIEUW_VELDEN,
+      historiek:[
+        {id:uid(), datum:'2026-06-23', tekst:'Startmail verzonden'},
+        {id:uid(), datum:'2026-06-25', tekst:'Afspraak showroom'},
+        {id:uid(), datum:'2026-06-30', tekst:'2de offerte'},
+      ], documenten:[] },
+
+    { id:uid(), fichenummer:'34', naam:'Familie Peeters', bedrijf:'', adres:'Dorpsstraat 12',
+      postcode:'2950', gemeente:'Kapellen', email:'peeters.gezin@telenet.be', telefoon:'0490 12 34 56',
+      datumAanvraag:vandaag(), bron:'webshop', typeKlant:'particulier', projecttype:'nieuwbouw',
+      waarde:'', status:'Nieuwe aanvraag', bak:'nieuw',
+      volgendeActie:'Startmail sturen', datumVolgendeActie:vandaag(), notities:'Aanvraag via DIY-pakket op de website.',
+      ...NIEUW_VELDEN,
+      historiek:[{id:uid(), datum:vandaag(), tekst:'Aanvraag ontvangen via webshop'}], documenten:[] },
+
+    // Afgewerkte werf met ingevuld rendement (voorbeeld)
+    { id:uid(), fichenummer:'21', naam:'Bouwbedrijf Van Damme', bedrijf:'Van Damme Bouw BVBA', adres:'Industrieweg 5',
+      postcode:'9000', gemeente:'Gent', email:'info@vandammebouw.be', telefoon:'09 123 45 67',
+      datumAanvraag:'2026-04-02', bron:'beurs', typeKlant:'installateur', projecttype:'kastbouw',
+      waarde:8500, status:'Gewonnen', bak:'afgewerkt',
+      volgendeActie:'', datumVolgendeActie:'', notities:'Terugkerende klant, vaste installateur.',
+      foto:'', datumShowroom:'2026-04-10',
+      eersteOfferte:{nummer:'2026-021', datum:'2026-04-20', omschrijving:'Kastbouw + KNX', prijs:'10000', btw:21},
+      uitbreidingen:[
+        {id:uid(), datum:'2026-04-28', omschrijving:'Extra dimmers (meerprijs)', prijs:'500'},
+      ],
+      aanpassingen:[
+        {id:uid(), datum:'2026-04-15', omschrijving:'Kast + zekeringen (Vecolux)', werkuren:'',  uurtarief:60, materiaal:'3200', marge:'30'},
+        {id:uid(), datum:'2026-04-18', omschrijving:'Domotica modules (Cebeo)',    werkuren:'',  uurtarief:60, materiaal:'900',  marge:'30'},
+        {id:uid(), datum:'2026-04-25', omschrijving:'Kast bouwen',                  werkuren:'40', uurtarief:60, materiaal:'',    marge:''},
+        {id:uid(), datum:'2026-05-02', omschrijving:'Programmatie KNX',             werkuren:'12', uurtarief:60, materiaal:'',    marge:''},
+      ],
+      voorschotten:[
+        {id:uid(), naam:'Voorschot 1', factuurnummer:'F2026-101', bedrag:'3000'},
+        {id:uid(), naam:'Eindfactuur', factuurnummer:'', bedrag:''},
+      ],
+      reclamebord:true, googleReview:true,
+      historiek:[
+        {id:uid(), datum:'2026-04-02', tekst:'Contact op beurs'},
+        {id:uid(), datum:'2026-04-20', tekst:'Offerte verstuurd'},
+        {id:uid(), datum:'2026-05-01', tekst:'Getekend'},
+      ], documenten:[] },
+  ];
+}
+
+/* =========================================================================
+   4. AUTOMATISATIES
+   ========================================================================= */
+
+function pasStatusToe(fiche, nieuweStatus){
+  const f = { ...fiche, status:nieuweStatus };
+  f.bak = bakVoorStatus(nieuweStatus);
+  const log = (tekst) => { f.historiek = [...(f.historiek||[]), {id:uid(), datum:vandaag(), tekst}]; };
+  log('Status → ' + nieuweStatus);
+  if (nieuweStatus === 'Offerte verstuurd'){ f.volgendeActie='Reminder sturen (opvolging offerte)'; f.datumVolgendeActie=plusDagen(7); }
+  else if (nieuweStatus === 'Reminder sturen'){ f.volgendeActie='Bellen (opvolging reminder)'; f.datumVolgendeActie=plusDagen(3); }
+  else if (nieuweStatus === 'Nieuwe aanvraag'){ f.volgendeActie='Startmail sturen'; f.datumVolgendeActie=vandaag(); }
+  else if (nieuweStatus === 'Bellen'){ f.volgendeActie='Klant opbellen'; f.datumVolgendeActie=vandaag(); }
+  else if (['Gewonnen','Verloren','Afgewerkt'].includes(nieuweStatus)){ f.volgendeActie=''; f.datumVolgendeActie=''; }
+  return f;
+}
+
+/* =========================================================================
+   5. KLEINE UI-BOUWSTENEN
+   ========================================================================= */
+
+function Logo(){
+  const [err,setErr]=useState(false);
+  if(err) return <div className="w-9 h-9 rounded-lg bg-bts-orange flex items-center justify-center font-display font-bold text-bts-ink text-lg">B</div>;
+  return <img src="betechsmart-logo.png" alt="BeTechSmart" onError={()=>setErr(true)} className="w-9 h-9 rounded-lg object-contain bg-white/5 p-0.5" />;
+}
+
+function StatusDot({status, size=10}){ const k=kleurVanStatus(status); return <span style={{width:size,height:size,background:k.hex}} className="inline-block rounded-full shrink-0" />; }
+function StatusBadge({status}){ const k=kleurVanStatus(status);
+  return <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{background:k.hex+'22', color:k.hex, border:'1px solid '+k.hex+'55'}}>
+    <span style={{width:7,height:7,background:k.hex}} className="rounded-full" />{status}</span>;
+}
+
+function StatCard({label, value, hex, active, onClick}){
+  return (
+    <button onClick={onClick}
+      className={"text-left rounded-xl px-3 py-2.5 border transition hover:brightness-110 "+(active?'ring-2 ring-bts-orange':'')}
+      style={{background:'#1B1F26', borderColor: hex? hex+'55':'#333A47'}}>
+      <div className="flex items-center gap-2">
+        {hex && <span style={{width:8,height:8,background:hex}} className="rounded-full" />}
+        <span className="text-2xl font-display font-bold text-white">{value}</span>
+      </div>
+      <div className="text-[11px] text-slate-400 mt-0.5 leading-tight">{label}</div>
+    </button>
+  );
+}
+
+/* =========================================================================
+   6. FICHE (gestapelde kaart)
+   ========================================================================= */
+
+function FicheCard({fiche, index, lifted, dimmed, scrollNow, scrollNonce, onOpen, onDragStart, onDragEnd, dragging}){
+  const k = kleurVanStatus(fiche.status);
+  const ref = useRef(null);
+  useEffect(()=>{ if(scrollNow && ref.current){ ref.current.scrollIntoView({behavior:'smooth', block:'center'}); } }, [scrollNow, scrollNonce]);
+  const r = rendement(fiche);
+
+  return (
+    <div ref={ref} draggable
+      onDragStart={(e)=>onDragStart(e,fiche)} onDragEnd={onDragEnd} onClick={()=>onOpen(fiche)}
+      style={{ marginTop: index===0 ? 0 : (-FICHE_OVERLAP)+'px' }}
+      className={"fiche rounded-md cursor-pointer select-none "+(lifted?'lifted ':'')+(dimmed?'dimmed ':'')+(dragging?'dragging ':'')}
+      title="Klik om te openen · sleep naar een andere bak">
+
+      {/* BOVENRANDJE — altijd zichtbaar: nummer + naam */}
+      <div className="rounded-md px-3 py-2.5 flex items-center gap-2.5" style={{borderTop:'3px solid '+k.hex}}>
+        <span className="font-mono text-[12px] font-bold text-slate-500 shrink-0 w-8 text-right">{fiche.fichenummer || '—'}</span>
+        <span style={{width:9,height:9,background:k.hex}} className="rounded-full shrink-0" />
+        <span className="font-display font-semibold text-[15px] text-slate-900 truncate flex-1">{fiche.naam || 'Naamloos'}</span>
+        <span className="shrink-0 flex items-center gap-1 text-[11px]">
+          {fiche.reclamebord && <span title="Reclamebordje meegegeven">🪧</span>}
+          {fiche.googleReview && <span title="Google review ok">⭐</span>}
+          {(fiche.datumVolgendeActie || fiche.postcode) &&
+            <span className="text-slate-500 hidden sm:block font-mono">{fiche.datumVolgendeActie ? toonDatum(fiche.datumVolgendeActie) : fiche.postcode}</span>}
+        </span>
+      </div>
+
+      {/* DETAIL — enkel wanneer de fiche omhoog komt */}
+      {lifted &&
+        <div className="px-3 pb-3 pt-1.5 border-t border-black/5">
+          <div className="flex gap-3">
+            {fiche.foto && <img src={fiche.foto} alt="" className="w-14 h-14 rounded-lg object-cover border border-black/10 shrink-0" />}
+            <div className="min-w-0 flex-1">
+              {fiche.bedrijf && <div className="text-[12.5px] font-semibold text-slate-700 truncate">{fiche.bedrijf}</div>}
+              <div className="text-[12px] text-slate-700 leading-snug space-y-0.5">
+                {(fiche.gemeente||fiche.postcode||fiche.adres) && <div className="truncate">📍 {[fiche.adres,[fiche.postcode,fiche.gemeente].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</div>}
+                {fiche.email && <div className="truncate">✉ {fiche.email}</div>}
+                {fiche.telefoon && <div className="truncate">☎ {fiche.telefoon}</div>}
+                {fiche.projecttype && <div className="truncate">🔧 {fiche.projecttype}{fiche.waarde?' · '+euro(fiche.waarde):''}</div>}
+              </div>
+            </div>
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{background:k.hex+'22', color:k.hex}}>{fiche.status}</span>
+            {r.omzet>0 &&
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                    style={{background:(r.winst>=0?'#25C167':'#EF4444')+'22', color:(r.winst>=0?'#149c4f':'#b91c1c')}}>
+                winst {euro(r.winst)} · {r.marge.toFixed(0)}%
+              </span>}
+            {fiche.volgendeActie && <span className="text-[10px] text-slate-500">⏱ {fiche.volgendeActie}</span>}
+          </div>
+        </div>}
+    </div>
+  );
+}
+
+/* =========================================================================
+   7. BAK
+   ========================================================================= */
+
+function Bak({bak, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNonce, onOpen, onDropFiche, drag}){
+  const [over, setOver] = useState(false);
+  const geordend = useMemo(()=>{
+    if(!zoekActief) return fiches;
+    return [...fiches].sort((a,b)=> (matchIds.has(a.id)?0:1) - (matchIds.has(b.id)?0:1));
+  },[fiches, matchIds, zoekActief]);
+  const totaalWaarde = fiches.reduce((s,f)=> s + (Number(f.waarde)||0), 0);
+  const expand = zoekActief || !!focusId;
+
+  return (
+    <section className="flex flex-col min-w-0">
+      <header className="flex items-baseline justify-between px-1 mb-2">
+        <div>
+          <h2 className="font-display font-bold text-white text-base">{bak.titel}</h2>
+          <p className="text-[11px] text-slate-500 -mt-0.5">{bak.sub}</p>
+        </div>
+        <div className="text-right">
+          <div className="font-mono text-bts-orange font-semibold text-sm">{fiches.length}</div>
+          {totaalWaarde>0 && <div className="text-[10px] text-slate-500">{euro(totaalWaarde)}</div>}
+        </div>
+      </header>
+
+      <div
+        onDragOver={(e)=>{ e.preventDefault(); setOver(true); }}
+        onDragLeave={()=>setOver(false)}
+        onDrop={(e)=>{ e.preventDefault(); setOver(false); onDropFiche(bak.id); }}
+        className={"bak-shell rounded-2xl p-3.5 pt-4 flex-1 min-h-[320px] "+(over?'bak-drop-active':'')}
+      >
+        <div className="bak-rail h-1.5 rounded-full mb-3 mx-1" />
+        <div className={"pr-1 pt-3 "+(expand?'':'scroll-thin overflow-y-auto')}
+             style={expand?{}:{maxHeight:'calc(100vh - 300px)'}}>
+          {geordend.length===0 &&
+            <div className="text-center text-slate-500 text-[13px] py-12 border border-dashed border-slate-700 rounded-xl">Sleep hier een fiche naartoe</div>}
+          {geordend.map((f,i) => (
+            <FicheCard key={f.id} fiche={f} index={i}
+              lifted={zoekActief ? matchIds.has(f.id) : (focusId===f.id)}
+              dimmed={zoekActief && !matchIds.has(f.id)}
+              scrollNow={zoekActief ? (firstMatchId===f.id) : (focusId===f.id)}
+              scrollNonce={scrollNonce}
+              dragging={drag.id===f.id}
+              onOpen={onOpen} onDragStart={drag.start} onDragEnd={drag.end} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================================
+   8. FICHE-MODAL (klembord met pagina's)
+   ========================================================================= */
+
+const LEEG_FICHE = () => ({
+  id:uid(), fichenummer:'', naam:'', bedrijf:'', adres:'', postcode:'', gemeente:'',
+  email:'', telefoon:'', datumAanvraag:vandaag(), bron:'webshop', typeKlant:'particulier',
+  projecttype:'KNX', waarde:'', status:'Nieuwe aanvraag', bak:'nieuw',
+  volgendeActie:'Startmail sturen', datumVolgendeActie:vandaag(), notities:'',
+  ...NIEUW_VELDEN, historiek:[], documenten:[],
+});
+
+function Veld({label, children}){
+  return <label className="block"><span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">{label}</span><div className="mt-1">{children}</div></label>;
+}
+const inputCls = "w-full bg-bts-panel2 border border-bts-line rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-bts-orange/60";
+
+function FicheModal({fiche, onClose, onSave, onDelete}){
+  const [f, _setF] = useState({ eersteOfferte:{nummer:'',datum:'',omschrijving:'',prijs:'',btw:21}, uitbreidingen:[], aanpassingen:[], voorschotten:[], ...fiche });
+  const [nieuweLog, setNieuweLog] = useState('');
+  const [nieuwDoc, setNieuwDoc] = useState('');
+  const [zoom, setZoom] = useState(false);
+  const [dragAanpId, setDragAanpId] = useState(null);
+  const [undoN, setUndoN] = useState(0);
+  const undoRef = useRef([]); const lastUndoRef = useRef(0);
+  const isNew = !fiche.__bestaat;
+  // setF met ingebouwde "ongedaan maken": snapshots (snel typen wordt samengevoegd)
+  function setF(updater){
+    const now = Date.now();
+    if(now - lastUndoRef.current > 500){ undoRef.current = [...undoRef.current.slice(-49), f]; setUndoN(undoRef.current.length); }
+    lastUndoRef.current = now;
+    _setF(updater);
+  }
+  function modalUndo(){
+    if(!undoRef.current.length) return;
+    const prev = undoRef.current[undoRef.current.length-1];
+    undoRef.current = undoRef.current.slice(0,-1); setUndoN(undoRef.current.length);
+    _setF(prev);
+  }
+  const set = (k,v) => setF(prev => ({...prev, [k]:v}));
+  const r = rendement(f);
+
+  function wijzigStatus(nieuw){ setF(prev => pasStatusToe(prev, nieuw)); }
+  const addDoc = (doc)=> setF(prev=>({...prev, documenten:[...(prev.documenten||[]), doc]}));
+  function voegLogToe(){ if(!nieuweLog.trim()) return; set('historiek', [...(f.historiek||[]), {id:uid(), datum:vandaag(), tekst:nieuweLog.trim()}]); setNieuweLog(''); }
+  const setLog = (id,key,val)=> setF(prev=>({...prev, historiek:(prev.historiek||[]).map(h=> h.id===id ? {...h,[key]:val} : h)}));
+  const delLog = (id)=> setF(prev=>({...prev, historiek:(prev.historiek||[]).filter(h=>h.id!==id)}));
+  function voegDocToe(){ if(!nieuwDoc.trim()) return; addDoc({id:uid(), naam:nieuwDoc.trim(), link:nieuwDoc.trim(), datum:vandaag()}); setNieuwDoc(''); }
+  function bestandToe(e){
+    const files=Array.from(e.target.files||[]);
+    files.forEach(file=>{
+      const reader=new FileReader();
+      reader.onload=ev=> addDoc({id:uid(), naam:file.name, datum:vandaag(), grootte:Math.round(file.size/1024)+' kB', type:file.type, dataUrl:ev.target.result});
+      reader.readAsDataURL(file);
+    });
+    e.target.value='';
+  }
+  function fotoToe(e){ const file=e.target.files[0]; if(!file) return; leesEnVerklein(file, 640, (d)=> set('foto', d)); e.target.value=''; }
+  function plakFoto(e){
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    for(const it of items){
+      if(it.type && it.type.indexOf('image')===0){
+        const file = it.getAsFile();
+        if(file){ leesEnVerklein(file, 640, (d)=> set('foto', d)); e.preventDefault(); return; }
+      }
+    }
+  }
+
+  // Eerste offerte
+  const setEO = (key,val)=> set('eersteOfferte', {...(f.eersteOfferte||{}), [key]:val});
+  // Extra uitbreidingen (bovenop de eerste offerte) — verkoop
+  const setUit = (id,key,val)=> set('uitbreidingen', (f.uitbreidingen||[]).map(u=> u.id===id ? {...u,[key]:val} : u));
+  const addUit = ()=> set('uitbreidingen', [...(f.uitbreidingen||[]), {id:uid(), datum:vandaag(), omschrijving:'', prijs:''}]);
+  const delUit = (id)=> set('uitbreidingen', (f.uitbreidingen||[]).filter(u=>u.id!==id));
+  // Aanpassingen — de kosten (materiaal + werkuren), aftrekbaar van de omzet
+  const setAanp = (id,key,val)=> set('aanpassingen', (f.aanpassingen||[]).map(a=> a.id===id ? {...a,[key]:val} : a));
+  const addAanp = ()=> set('aanpassingen', [...(f.aanpassingen||[]), {id:uid(), datum:vandaag(), omschrijving:'', werkuren:'', uurtarief:UURTARIEF_STD, materiaal:'', marge:''}]);
+  const delAanp = (id)=> set('aanpassingen', (f.aanpassingen||[]).filter(a=>a.id!==id));
+  // Aanpassingen verslepen om de volgorde te wijzigen
+  function moveAanp(fromId, toId){
+    setF(prev=>{
+      const arr=[...(prev.aanpassingen||[])];
+      const fi=arr.findIndex(a=>a.id===fromId), ti=arr.findIndex(a=>a.id===toId);
+      if(fi<0||ti<0||fi===ti) return prev;
+      const [item]=arr.splice(fi,1); arr.splice(ti,0,item);
+      return {...prev, aanpassingen:arr};
+    });
+  }
+  // Voorschotten / facturatie
+  const setVs = (id,key,val)=> set('voorschotten', (f.voorschotten||[]).map(v=> v.id===id ? {...v,[key]:val} : v));
+  const addVs = ()=>{ const n=(f.voorschotten||[]).length; const naam = n===0?'Voorschot 1' : (n===1?'Voorschot 2':'Eindfactuur'); set('voorschotten', [...(f.voorschotten||[]), {id:uid(), naam, factuurnummer:'', bedrag:''}]); };
+  const delVs = (id)=> set('voorschotten', (f.voorschotten||[]).filter(v=>v.id!==id));
+
+  const historiekGesorteerd = [...(f.historiek||[])].sort((a,b)=> (b.datum||'').localeCompare(a.datum||''));
+
+  return (
+    <React.Fragment>
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 md:p-4" onClick={onClose}>
+      <div className="pop bg-bts-panel border border-bts-line rounded-2xl w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden shadow-2xl" onClick={e=>e.stopPropagation()} onPaste={plakFoto}>
+
+        <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-bts-line" style={{borderTop:'4px solid '+kleurVanStatus(f.status).hex}}>
+          <div className="flex items-center gap-3 min-w-0">
+            {f.foto
+              ? <img src={f.foto} alt="" onClick={()=>setZoom(true)} title="Klik om te vergroten" className="w-10 h-10 rounded-lg object-cover border border-white/10 cursor-zoom-in" />
+              : <span className="w-10 h-10 rounded-lg bg-bts-panel2 border border-bts-line flex items-center justify-center text-slate-500">👤</span>}
+            <span className="font-mono text-xs text-slate-500">FICHE {f.fichenummer||'nieuw'}</span>
+            <h2 className="font-display font-bold text-white text-lg truncate">{f.naam || 'Nieuwe fiche'}</h2>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none px-2">✕</button>
+        </div>
+
+        <div className="overflow-y-auto scroll-thin flex-1">
+        <div className="grid md:grid-cols-2 gap-5 p-5">
+          {/* LINKS: contactgegevens */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              <Veld label="Fiche #"><input className={inputCls} value={f.fichenummer} onChange={e=>set('fichenummer',e.target.value)} /></Veld>
+              <div className="col-span-2"><Veld label="Naam"><input className={inputCls} value={f.naam} onChange={e=>set('naam',e.target.value)} /></Veld></div>
+            </div>
+            <Veld label="Bedrijf"><input className={inputCls} value={f.bedrijf} onChange={e=>set('bedrijf',e.target.value)} /></Veld>
+            <Veld label="Adres"><input className={inputCls} value={f.adres} onChange={e=>set('adres',e.target.value)} /></Veld>
+            <div className="grid grid-cols-3 gap-2">
+              <Veld label="Postcode"><input className={inputCls} value={f.postcode} onChange={e=>set('postcode',e.target.value)} /></Veld>
+              <div className="col-span-2"><Veld label="Gemeente"><input className={inputCls} value={f.gemeente} onChange={e=>set('gemeente',e.target.value)} /></Veld></div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Veld label="E-mail"><input className={inputCls} value={f.email} onChange={e=>set('email',e.target.value)} /></Veld>
+              <Veld label="Telefoon"><input className={inputCls} value={f.telefoon} onChange={e=>set('telefoon',e.target.value)} /></Veld>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Veld label="Datum aanvraag"><input type="date" className={inputCls} value={f.datumAanvraag} onChange={e=>set('datumAanvraag',e.target.value)} /></Veld>
+              <Veld label="Datum showroombezoek"><input type="date" className={inputCls} value={f.datumShowroom||''} onChange={e=>set('datumShowroom',e.target.value)} /></Veld>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Veld label="Bron"><select className={inputCls} value={f.bron} onChange={e=>set('bron',e.target.value)}>{[...new Set([f.bron, ...BRONNEN])].filter(Boolean).map(b=><option key={b}>{b}</option>)}</select></Veld>
+              <Veld label="Type klant"><select className={inputCls} value={f.typeKlant} onChange={e=>set('typeKlant',e.target.value)}>{TYPES_KLANT.map(t=><option key={t}>{t}</option>)}</select></Veld>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Veld label="Projecttype"><select className={inputCls} value={f.projecttype} onChange={e=>set('projecttype',e.target.value)}>{PROJECTTYPES.map(t=><option key={t}>{t}</option>)}</select></Veld>
+              <Veld label="Geschatte waarde (pijplijn) €"><input type="number" className={inputCls} value={f.waarde} onChange={e=>set('waarde',e.target.value)} placeholder="bv. 4500" /></Veld>
+            </div>
+          </div>
+
+          {/* RECHTS: foto + status + tikvakjes + notities + docs + tijdlijn */}
+          <div className="space-y-3">
+            {/* Klantfoto — plak een screenshot (Ctrl+V) of kies een bestand */}
+            <div>
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Foto van de klant</span>
+              <div className="mt-1 flex items-start gap-3">
+                {f.foto
+                  ? <img src={f.foto} alt="" onClick={()=>setZoom(true)} title="Klik om te vergroten" className="w-24 h-24 rounded-lg object-cover border border-bts-line cursor-zoom-in hover:brightness-110" />
+                  : <div className="w-24 h-24 rounded-lg bg-bts-panel2 border border-dashed border-bts-line flex items-center justify-center text-center text-[10px] leading-tight text-slate-500 px-1">Plak hier<br/>(Ctrl&nbsp;+&nbsp;V)</div>}
+                <div className="flex flex-col gap-1.5">
+                  <label className="px-3 py-1.5 rounded-lg bg-bts-panel2 border border-bts-line text-sm cursor-pointer hover:border-bts-orange text-slate-200 text-center">
+                    {f.foto ? 'Vervangen' : 'Foto kiezen'}
+                    <input type="file" accept="image/*" className="hidden" onChange={fotoToe} />
+                  </label>
+                  <span className="text-[11px] text-slate-500">of maak een printscreen en druk <b>Ctrl + V</b></span>
+                  {f.foto && <button onClick={()=>set('foto','')} className="text-xs text-slate-500 hover:text-red-400 text-left">verwijderen</button>}
+                </div>
+              </div>
+            </div>
+
+            <Veld label="Status">
+              <select className={inputCls} value={f.status} onChange={e=>wijzigStatus(e.target.value)}>{STATUSSEN.map(s=><option key={s.id}>{s.id}</option>)}</select>
+              <div className="mt-1"><StatusBadge status={f.status} /></div>
+            </Veld>
+
+            {/* Tikvakjes */}
+            <div className="flex flex-wrap gap-2">
+              <label className={"flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm "+(f.reclamebord?'border-bts-orange bg-bts-orange/10 text-white':'border-bts-line text-slate-300')}>
+                <input type="checkbox" className="accent-bts-orange" checked={!!f.reclamebord} onChange={e=>set('reclamebord',e.target.checked)} />
+                🪧 Reclamebordje meegegeven
+              </label>
+              <label className={"flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm "+(f.googleReview?'border-bts-orange bg-bts-orange/10 text-white':'border-bts-line text-slate-300')}>
+                <input type="checkbox" className="accent-bts-orange" checked={!!f.googleReview} onChange={e=>set('googleReview',e.target.checked)} />
+                ⭐ Google review ok
+              </label>
+            </div>
+
+            <Veld label="Notities"><textarea rows={3} className={inputCls} value={f.notities} onChange={e=>set('notities',e.target.value)} placeholder="Interne notities…" /></Veld>
+
+            <div>
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Documenten / foto's / plannen / offertes</span>
+              <div className="mt-1 space-y-1.5">
+                {(f.documenten||[]).map(d=>(
+                  <div key={d.id} className="flex items-center justify-between bg-bts-panel2 border border-bts-line rounded-lg px-3 py-1.5 text-sm gap-2">
+                    <button onClick={()=>openDoc(d)} title="Openen" className="flex-1 min-w-0 text-left truncate hover:text-bts-orange">
+                      📎 {d.naam} <span className="text-slate-500 text-xs">{d.grootte||d.datum}</span>
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={()=>openDoc(d)} className="text-bts-orange hover:underline text-xs">openen</button>
+                      <button onClick={()=>set('documenten', f.documenten.filter(x=>x.id!==d.id))} className="text-slate-500 hover:text-red-400 text-xs">verwijder</button>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <input value={nieuwDoc} onChange={e=>setNieuwDoc(e.target.value)} placeholder="Naam / link toevoegen" className={inputCls+' text-xs'} onKeyDown={e=>e.key==='Enter'&&voegDocToe()} />
+                  <button onClick={voegDocToe} className="px-3 rounded-lg bg-bts-panel2 border border-bts-line text-sm hover:border-bts-orange">+</button>
+                </div>
+                <label className="block text-xs text-slate-500 cursor-pointer hover:text-bts-orange">📁 Bestand kiezen (naam wordt bijgehouden)…<input type="file" multiple className="hidden" onChange={bestandToe} /></label>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Historiek / tijdlijn</span>
+              <div className="mt-1 flex gap-2">
+                <input value={nieuweLog} onChange={e=>setNieuweLog(e.target.value)} placeholder="Wat gebeurde er?" className={inputCls+' text-sm'} onKeyDown={e=>e.key==='Enter'&&voegLogToe()} />
+                <button onClick={voegLogToe} className="px-3 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm">Log</button>
+              </div>
+              <ol className="mt-2 space-y-1.5 max-h-52 overflow-y-auto scroll-thin pr-1">
+                {historiekGesorteerd.map(h=>(
+                  <li key={h.id} className="flex gap-1.5 items-center">
+                    <input type="date" value={h.datum||''} onChange={e=>setLog(h.id,'datum',e.target.value)} className={inputCls+' w-32 py-1 text-xs shrink-0'} />
+                    <input value={h.tekst||''} onChange={e=>setLog(h.id,'tekst',e.target.value)} className={inputCls+' flex-1 py-1 text-sm'} />
+                    <button onClick={()=>delLog(h.id)} title="Verwijder" className="px-2 py-1 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm shrink-0">✕</button>
+                  </li>
+                ))}
+                {historiekGesorteerd.length===0 && <li className="text-slate-500 text-sm">Nog geen historiek.</li>}
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        {/* OFFERTE & RENDEMENT — volledige breedte */}
+        <div className="mx-5 mb-5 rounded-xl border border-bts-line bg-bts-panel2/40 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-lg">📊</span>
+            <h3 className="font-display font-bold text-white">Offerte &amp; rendement</h3>
+          </div>
+
+          {/* Eerste offerte */}
+          <div className="rounded-lg border border-bts-line bg-bts-panel/50 p-3">
+            <div className="text-[12px] font-semibold text-bts-orange uppercase tracking-wide mb-2">Eerste offerte</div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <Veld label="Offertenummer"><input className={inputCls} value={(f.eersteOfferte||{}).nummer||''} onChange={e=>setEO('nummer',e.target.value)} placeholder="2026-…" /></Veld>
+              <Veld label="Datum"><input type="date" className={inputCls} value={(f.eersteOfferte||{}).datum||''} onChange={e=>setEO('datum',e.target.value)} /></Veld>
+              <Veld label="Omschrijving"><input className={inputCls} value={(f.eersteOfferte||{}).omschrijving||''} onChange={e=>setEO('omschrijving',e.target.value)} placeholder="bv. KNX + kastbouw" /></Veld>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <Veld label="BTW">
+                <select className={inputCls} value={(f.eersteOfferte||{}).btw || 21} onChange={e=>setEO('btw',e.target.value)}>
+                  <option value={6}>6%</option><option value={21}>21%</option>
+                </select>
+              </Veld>
+              <Veld label="Prijs excl. BTW €">
+                <input type="number" className={inputCls} value={(f.eersteOfferte||{}).prijs||''} onChange={e=>setEO('prijs',e.target.value)} placeholder="bv. 8500" />
+              </Veld>
+              <Veld label="Prijs incl. BTW €">
+                <div className={inputCls+' bg-bts-panel font-semibold text-white flex items-center'}>{euro(r.offerteIncl) || '€ 0'}</div>
+              </Veld>
+            </div>
+
+            {/* Extra uitbreidingen (komen bovenop de eerste offerte) */}
+            <div className="mt-3 pt-3 border-t border-bts-line">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-semibold text-slate-300 uppercase tracking-wide">Extra uitbreidingen</span>
+                <button onClick={addUit} className="text-xs px-2 py-1 rounded-md bg-bts-panel2 border border-bts-line hover:border-bts-orange text-slate-200">+ toevoegen</button>
+              </div>
+              <div className="space-y-2">
+                <div className="hidden sm:grid grid-cols-12 gap-2 text-[10px] uppercase text-slate-500 px-1">
+                  <span className="col-span-3">Datum</span><span className="col-span-6">Omschrijving</span><span className="col-span-3">Prijs excl. BTW €</span>
+                </div>
+                {(f.uitbreidingen||[]).length===0 && <p className="text-sm text-slate-500">Geen extra's. Klik “+ toevoegen” voor meerwerk bovenop de offerte.</p>}
+                {(f.uitbreidingen||[]).map(u=>(
+                  <div key={u.id} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center">
+                    <input type="date" className={inputCls+' sm:col-span-3 py-1.5'} value={u.datum} onChange={e=>setUit(u.id,'datum',e.target.value)} />
+                    <input className={inputCls+' sm:col-span-6 py-1.5'} value={u.omschrijving} onChange={e=>setUit(u.id,'omschrijving',e.target.value)} placeholder="bv. extra circuit / dimmers" />
+                    <div className="flex gap-1 sm:col-span-3">
+                      <input type="number" className={inputCls+' py-1.5'} value={u.prijs} onChange={e=>setUit(u.id,'prijs',e.target.value)} placeholder="0" />
+                      <button onClick={()=>delUit(u.id)} className="px-2 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm">✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10.5px] text-slate-500 mt-2">Eerste offerte + uitbreidingen = <b className="text-slate-300">omzet / projecttotaal ({euro(r.omzet)} excl.)</b>. De aanpassingen hieronder worden hiervan afgetrokken.</p>
+            </div>
+          </div>
+
+          {/* Aanpassingen = materiaal + marge + werkuren, elk met een verkoopprijs — versleepbaar */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-semibold text-bts-orange uppercase tracking-wide">Aanpassingen — materiaal, marge &amp; werkuren · excl. BTW</span>
+              <button onClick={addAanp} className="text-xs px-2 py-1 rounded-md bg-bts-panel2 border border-bts-line hover:border-bts-orange text-slate-200">+ regel toevoegen</button>
+            </div>
+            <div className="mt-2 space-y-2">
+              <div className="hidden md:grid grid-cols-12 gap-2 text-[10px] uppercase text-slate-500 px-1">
+                <span className="col-span-1"></span>
+                <span className="col-span-2">Datum</span>
+                <span className="col-span-2">Omschrijving</span>
+                <span className="col-span-2">Materiaal aankoop €</span>
+                <span className="col-span-1">Marge %</span>
+                <span className="col-span-1">Uren</span>
+                <span className="col-span-1">Tarief €</span>
+                <span className="col-span-2">Kostprijs €</span>
+              </div>
+              {(f.aanpassingen||[]).length===0 && <p className="text-sm text-slate-500">Nog geen regels. Klik “+ regel toevoegen” voor materiaal (met marge) of werkuren.</p>}
+              {(f.aanpassingen||[]).map(a=>(
+                <div key={a.id}
+                  onDragOver={(e)=>e.preventDefault()}
+                  onDrop={(e)=>{ e.preventDefault(); if(dragAanpId) moveAanp(dragAanpId, a.id); setDragAanpId(null); }}
+                  className={"grid grid-cols-2 md:grid-cols-12 gap-2 items-center rounded-lg "+(dragAanpId===a.id?'opacity-40':'')}>
+                  <span draggable onDragStart={()=>setDragAanpId(a.id)} onDragEnd={()=>setDragAanpId(null)}
+                        title="Versleep om de volgorde te wijzigen"
+                        className="md:col-span-1 cursor-grab active:cursor-grabbing select-none text-center text-slate-500 hover:text-bts-orange text-lg leading-none">⠿</span>
+                  <input type="date" className={inputCls+' md:col-span-2 py-1.5'} value={a.datum} onChange={e=>setAanp(a.id,'datum',e.target.value)} />
+                  <input className={inputCls+' md:col-span-2 py-1.5'} value={a.omschrijving} onChange={e=>setAanp(a.id,'omschrijving',e.target.value)} placeholder="bv. Kast + zekeringen" />
+                  <input type="number" className={inputCls+' md:col-span-2 py-1.5'} value={a.materiaal} onChange={e=>setAanp(a.id,'materiaal',e.target.value)} placeholder="0" />
+                  <input type="number" className={inputCls+' md:col-span-1 py-1.5'} value={a.marge} onChange={e=>setAanp(a.id,'marge',e.target.value)} placeholder="0" title="Jouw marge op dit materiaal (%)" />
+                  <input type="number" className={inputCls+' md:col-span-1 py-1.5'} value={a.werkuren} onChange={e=>setAanp(a.id,'werkuren',e.target.value)} placeholder="0" />
+                  <input type="number" className={inputCls+' md:col-span-1 py-1.5'} value={a.uurtarief} onChange={e=>setAanp(a.id,'uurtarief',e.target.value)} placeholder={UURTARIEF_STD} />
+                  <div className="flex gap-1 items-center md:col-span-2">
+                    <span className="flex-1 rounded-lg bg-bts-panel border border-bts-line px-2 py-1.5 text-sm font-semibold text-white text-right">{euro(rijKost(a))}</span>
+                    <button onClick={()=>delAanp(a.id)} className="px-2 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm">✕</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10.5px] text-slate-500 mt-2">Alle bedragen <b>excl. BTW</b>. Kostprijs = materiaal (aankoop) + (uren × tarief). Deze kosten worden van de omzet afgetrokken; je <b>marge op het materiaal blijft winst</b> (zie samenvatting). Sleep met ⠿ om te herschikken.</p>
+          </div>
+
+          {/* Samenvatting: omzet (offerte + uitbreidingen) − aanpassingen = winst */}
+          <div className="mt-4 space-y-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+              <div className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2">
+                <div className="text-[11px] text-slate-400">Eerste offerte</div><div className="font-display font-bold text-slate-200">{euro(r.offerteExcl)}</div>
+              </div>
+              <div className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2">
+                <div className="text-[11px] text-slate-400">+ Uitbreidingen</div><div className="font-display font-bold text-slate-200">{euro(r.uitbreidingenExcl)}</div>
+              </div>
+              <div className="rounded-lg px-3 py-2 border border-bts-orange/50 bg-bts-orange/10">
+                <div className="text-[11px] text-bts-orange">= Omzet / projecttotaal (excl.)</div><div className="font-display font-bold text-white">{euro(r.omzet)}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+              <div className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2">
+                <div className="text-[11px] text-slate-400">− Materiaal &amp; werkuren (aankoop, excl.)</div><div className="font-display font-bold text-slate-200">{euro(r.kosten)}</div>
+              </div>
+              <div className="rounded-lg bg-bts-panel2 border border-dashed border-bts-line px-3 py-2">
+                <div className="text-[11px] text-slate-400">+ Marge op materiaal (winst)</div><div className="font-display font-bold text-slate-300">{euro(r.materiaalMarge)}</div>
+              </div>
+              <div className="rounded-lg px-3 py-2 border" style={{background:(r.winst>=0?'#25C167':'#EF4444')+'1a', borderColor:(r.winst>=0?'#25C167':'#EF4444')+'66'}}>
+                <div className="text-[11px]" style={{color:(r.winst>=0?'#7ee0a4':'#fca5a5')}}>= Winst · marge</div>
+                <div className="font-display font-bold" style={{color:(r.winst>=0?'#4ade80':'#f87171')}}>{euro(r.winst)} · {r.marge.toFixed(1)}%</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Facturatie & voorschotten */}
+          <div className="mt-4 rounded-lg border border-bts-line bg-bts-panel/50 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[12px] font-semibold text-bts-orange uppercase tracking-wide">Facturatie &amp; voorschotten</span>
+              <button onClick={addVs} className="text-xs px-2 py-1 rounded-md bg-bts-panel2 border border-bts-line hover:border-bts-orange text-slate-200">+ voorschot / factuur</button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+              <div className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2">
+                <div className="text-[11px] text-slate-400">Projecttotaal (incl. BTW)</div>
+                <div className="font-display font-bold text-white">{euro(r.projecttotaal)}</div>
+                <div className="text-[10px] text-slate-500">excl. {euro(r.omzet)}</div>
+              </div>
+              <div className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2">
+                <div className="text-[11px] text-slate-400">Reeds gefactureerd (incl.)</div>
+                <div className="font-display font-bold text-slate-200">{euro(r.voorschottenIncl)}</div>
+                <div className="text-[10px] text-slate-500">excl. {euro(r.voorschottenExcl)}</div>
+              </div>
+              <div className="rounded-lg px-3 py-2 border" style={{background:'#F26A211a', borderColor:'#F26A2166'}}>
+                <div className="text-[11px] text-bts-orange">Resttotaal (incl.)</div>
+                <div className="font-display font-bold text-bts-orange">{euro(r.rest)}</div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="hidden sm:grid grid-cols-12 gap-2 text-[10px] uppercase text-slate-500 px-1">
+                <span className="col-span-4">Benaming</span><span className="col-span-3">Factuurnummer</span><span className="col-span-2">Bedrag excl. €</span><span className="col-span-2">Incl. BTW €</span><span className="col-span-1"></span>
+              </div>
+              {(f.voorschotten||[]).length===0 && <p className="text-sm text-slate-500">Nog geen voorschotten. Klik “+ voorschot / factuur”.</p>}
+              {(f.voorschotten||[]).map(v=>{
+                const incl = (Number(v.bedrag)||0) * (1 + r.btw/100);
+                return (
+                  <div key={v.id} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center">
+                    <input className={inputCls+' sm:col-span-4 py-1.5'} value={v.naam} onChange={e=>setVs(v.id,'naam',e.target.value)} placeholder="Voorschot 1 / Eindfactuur" />
+                    <input className={inputCls+' sm:col-span-3 py-1.5'} value={v.factuurnummer} onChange={e=>setVs(v.id,'factuurnummer',e.target.value)} placeholder="factuurnr." />
+                    <input type="number" className={inputCls+' sm:col-span-2 py-1.5'} value={v.bedrag} onChange={e=>setVs(v.id,'bedrag',e.target.value)} placeholder="0" />
+                    <span className="sm:col-span-2 rounded-lg bg-bts-panel border border-bts-line px-2 py-1.5 text-sm text-slate-300 text-right">{euro(Math.round(incl*100)/100)}</span>
+                    <button onClick={()=>delVs(v.id)} className="sm:col-span-1 px-2 py-1.5 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm">✕</button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10.5px] text-slate-500 mt-2">Je geeft het bedrag <b>excl. BTW</b> in; incl. BTW wordt automatisch berekend ({r.btw}%). Resttotaal = projecttotaal − alle voorschotten.</p>
+          </div>
+        </div>
+
+        </div>{/* einde scrollbare body */}
+
+        <div className="shrink-0 flex items-center justify-between px-5 py-4 border-t border-bts-line">
+          {!isNew ? <button onClick={()=>onDelete(f.id)} className="text-red-400 hover:text-red-300 text-sm">Fiche verwijderen</button> : <span/>}
+          <div className="flex gap-2">
+            <button onClick={modalUndo} disabled={!undoN} title="Laatste wijziging in deze fiche ongedaan maken"
+              className={"px-4 py-2 rounded-lg border text-sm "+(undoN?'border-bts-line text-slate-200 hover:border-bts-orange':'border-bts-line text-slate-600 cursor-not-allowed')}>↶ Ongedaan{undoN?' ('+undoN+')':''}</button>
+            <button onClick={onClose} className="px-4 py-2 rounded-lg border border-bts-line text-slate-300 hover:bg-bts-panel2 text-sm">Annuleren</button>
+            <button onClick={()=>{ const c={...f}; delete c.__bestaat; onSave(c); }} className="px-5 py-2 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm hover:bg-bts-orangeDark">Opslaan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {zoom && f.foto &&
+      <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 cursor-zoom-out" onClick={()=>setZoom(false)}>
+        <img src={f.foto} alt="Klantfoto" className="max-w-full max-h-full rounded-lg shadow-2xl" onClick={(e)=>e.stopPropagation()} />
+        <button onClick={()=>setZoom(false)} className="absolute top-4 right-5 text-white/80 hover:text-white text-3xl leading-none">✕</button>
+      </div>}
+    </React.Fragment>
+  );
+}
+
+/* =========================================================================
+   9. VANDAAG TE DOEN
+   ========================================================================= */
+
+function VandaagPaneel({fiches, onToonInBak, onOpen}){
+  const vd = vandaag();
+  const teDoen = fiches
+    .filter(f => (f.datumVolgendeActie && f.datumVolgendeActie <= vd) || ['Reminder sturen','Bellen','Offerte maken'].includes(f.status))
+    .filter(f => !['Gewonnen','Verloren','Afgewerkt'].includes(f.status))
+    .sort((a,b)=> (a.datumVolgendeActie||'9999').localeCompare(b.datumVolgendeActie||'9999'));
+
+  return (
+    <div className="bg-bts-panel border border-bts-line rounded-2xl p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-lg">☀️</span><h3 className="font-display font-bold text-white">Vandaag te doen</h3>
+        <span className="ml-auto text-xs font-mono px-2 py-0.5 rounded-full bg-bts-orange/20 text-bts-orange">{teDoen.length}</span>
+      </div>
+      {teDoen.length===0
+        ? <p className="text-sm text-slate-500">Niets dringend. Alles onder controle. ✅</p>
+        : <ul className="space-y-1.5 max-h-64 overflow-y-auto scroll-thin pr-1">
+            {teDoen.map(f=>{
+              const laat = f.datumVolgendeActie && f.datumVolgendeActie < vd;
+              const bak = BAK_MAP[f.bak||'nieuw'];
+              return (
+                <li key={f.id} className="flex items-center gap-2 bg-bts-panel2 rounded-lg px-2 py-2">
+                  <button onClick={()=>onToonInBak(f)} title="Toon deze fiche in zijn bak" className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                    <StatusDot status={f.status} />
+                    <span className="min-w-0">
+                      <span className="block text-sm text-slate-200 truncate"><b>{f.naam}</b> · {f.volgendeActie || f.status}</span>
+                      <span className="block text-[10.5px] text-slate-500 truncate">📦 {bak?bak.titel:'—'}{f.datumVolgendeActie?' · '+(laat?'⚠ ':'')+toonDatum(f.datumVolgendeActie):''}</span>
+                    </span>
+                  </button>
+                  <button onClick={()=>onOpen(f)} title="Open fiche" className="shrink-0 text-xs px-2 py-1 rounded-md border border-bts-line text-slate-300 hover:border-bts-orange hover:text-bts-orange">✏ open</button>
+                </li>
+              );
+            })}
+          </ul>}
+    </div>
+  );
+}
+
+/* =========================================================================
+   10. HOOFDAPP
+   ========================================================================= */
+
+function App(){
+  const [fiches, setFiches] = useState(()=>{
+    const raw = storage.get(LS_KEY);
+    if(raw){ try { return JSON.parse(raw); } catch(e){} }
+    return seedData();
+  });
+  const [zoek, setZoek] = useState('');
+  const [modal, setModal] = useState(null);
+  const [filters, setFilters] = useState({status:'', projecttype:'', gemeente:'', minWaarde:'', vanaf:''});
+  const [toonFilters, setToonFilters] = useState(false);
+  const [drag, setDrag] = useState({id:null, fiche:null});
+  const [focusId, setFocusId] = useState(null);
+  const [scrollNonce, setScrollNonce] = useState(0);
+  const [undoStack, setUndoStack] = useState([]);
+  const importRef = useRef(null);
+
+  const snapshot = ()=> setUndoStack(s => [...s.slice(-24), fiches]);
+  function undo(){
+    setUndoStack(s => {
+      if(s.length===0) return s;
+      setFiches(s[s.length-1]);
+      setModal(null);
+      return s.slice(0,-1);
+    });
+  }
+
+  useEffect(()=>{ storage.set(LS_KEY, JSON.stringify(fiches)); }, [fiches]);
+
+  const zoekActief = zoek.trim().length>0;
+  const matchIds = useMemo(()=>{
+    const q = zoek.trim().toLowerCase(); const set = new Set();
+    if(!q) return set;
+    for(const f of fiches){
+      const hb = [f.naam,f.bedrijf,f.adres,f.postcode,f.gemeente,f.email,f.telefoon,f.projecttype,f.status,f.fichenummer,String(f.waarde||'')].join(' ').toLowerCase();
+      if(hb.includes(q)) set.add(f.id);
+    }
+    return set;
+  }, [zoek, fiches]);
+  const firstMatchId = useMemo(()=>{ if(!zoekActief) return null; const m = fiches.find(f => matchIds.has(f.id)); return m?m.id:null; }, [zoekActief, matchIds, fiches]);
+
+  const gefilterd = useMemo(()=> fiches.filter(f=>{
+    if(filters.status && f.status!==filters.status) return false;
+    if(filters.projecttype && f.projecttype!==filters.projecttype) return false;
+    if(filters.gemeente && !(f.gemeente||'').toLowerCase().includes(filters.gemeente.toLowerCase())) return false;
+    if(filters.minWaarde && (Number(f.waarde)||0) < Number(filters.minWaarde)) return false;
+    if(filters.vanaf && (f.datumAanvraag||'') < filters.vanaf) return false;
+    return true;
+  }), [fiches, filters]);
+  const perBak = (bakId) => gefilterd.filter(f => (f.bak||'nieuw')===bakId);
+
+  const tellingen = useMemo(()=>{ const t={}; STATUSSEN.forEach(s=> t[s.id]=0); fiches.forEach(f=>{ if(t[f.status]!==undefined) t[f.status]++; }); return t; }, [fiches]);
+  const totaleWaarde = fiches.reduce((s,f)=> s+(Number(f.waarde)||0), 0);
+
+  // Omzet & winst per jaar (op basis van het jaartal in het fichenummer, anders de aanvraagdatum)
+  const perJaar = useMemo(()=>{
+    const m={};
+    fiches.forEach(f=>{ const j=ficheJaar(f); const r=rendement(f); if(!m[j]) m[j]={jaar:j, aantal:0, omzet:0, winst:0}; m[j].aantal++; m[j].omzet+=r.omzet; m[j].winst+=r.winst; });
+    return Object.values(m).sort((a,b)=> String(b.jaar).localeCompare(String(a.jaar)));
+  }, [fiches]);
+
+  function opslaan(fiche){
+    const nr = (fiche.fichenummer||'').trim();
+    if(nr && fiches.some(x => x.id!==fiche.id && (x.fichenummer||'').trim()===nr)){
+      alert('Fichenummer "'+nr+'" bestaat al bij een andere fiche. Kies een uniek nummer.');
+      return;
+    }
+    snapshot();
+    setFiches(prev=>{ const bestaat=prev.some(x=>x.id===fiche.id); return bestaat?prev.map(x=>x.id===fiche.id?fiche:x):[...prev,fiche]; });
+    setModal(null);
+  }
+  function verwijder(id){ if(!window.confirm('Deze fiche definitief verwijderen? (kan hersteld worden met “Ongedaan maken”)')) return; snapshot(); setFiches(prev=>prev.filter(x=>x.id!==id)); setModal(null); }
+  function nieuweFiche(){
+    const jaar = String(new Date().getFullYear());
+    let maxSeq = 0;
+    fiches.forEach(f=>{ const s=ficheSeq(f.fichenummer); if(s && s.jaar===jaar && s.seq>maxSeq) maxSeq=s.seq; });
+    const nummer = jaar + '-' + String(maxSeq+1).padStart(3,'0');
+    setModal({...LEEG_FICHE(), fichenummer:nummer});
+  }
+  function openFiche(f){ setFocusId(null); setModal({...f, __bestaat:true}); }
+  function toonInBak(f){ setZoek(''); setFocusId(f.id); setScrollNonce(n=>n+1); }
+  function zoekWijzig(v){ setZoek(v); setFocusId(null); }
+
+  const dragStart = (e,f)=>{ setDrag({id:f.id, fiche:f}); e.dataTransfer.effectAllowed='move'; };
+  const dragEnd = ()=> setDrag({id:null, fiche:null});
+  function dropInBak(bakId){ if(!drag.id) return; snapshot(); setFiches(prev=>prev.map(f=> f.id===drag.id ? {...f, bak:bakId} : f)); setDrag({id:null, fiche:null}); }
+
+  function exporteer(){ const blob=new Blob(['\ufeff'+toCSV(fiches)],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='betechsmart-fiches-'+vandaag()+'.csv'; a.click(); URL.revokeObjectURL(url); }
+  function importeer(e){
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const rows=parseCSV(ev.target.result);
+      if(rows.length<2){ alert('Geen data gevonden in CSV.'); return; }
+      const kop=rows[0].map(h=>h.trim().toLowerCase()); const idx=(n)=>kop.indexOf(n);
+      const nieuwe=rows.slice(1).map(r=>{
+        const g=(n)=>{ const i=idx(n); return i>=0?(r[i]||'').trim():''; };
+        const status = g('status') && STATUS_MAP[g('status')] ? g('status') : 'Nieuwe aanvraag';
+        return { ...LEEG_FICHE(), id:uid(),
+          fichenummer:g('fichenummer'), naam:g('naam'), bedrijf:g('bedrijf'), adres:g('adres'),
+          postcode:g('postcode'), gemeente:g('gemeente'), email:g('email'), telefoon:g('telefoon'),
+          datumAanvraag: parseNlDatum(g('datumaanvraag')) || vandaag(), datumShowroom: parseNlDatum(g('datumshowroom')),
+          bron:g('bron')||'mail', typeKlant:g('typeklant')||'particulier', projecttype:g('projecttype')||'KNX',
+          waarde:g('waarde'),
+          status, bak: g('bak') || bakVoorStatus(status),
+          volgendeActie:g('volgendeactie'), datumVolgendeActie:parseNlDatum(g('datumvolgendeactie')),
+          reclamebord: /^(1|ja|true|x)$/i.test(g('reclamebord')), googleReview: /^(1|ja|true|x)$/i.test(g('googlereview')),
+          notities:g('notities'), historiek:[], documenten:[], aanpassingen:[] };
+      });
+      setFiches(prev=>{ setUndoStack(s=>[...s.slice(-24), prev]); return [...prev, ...nieuwe]; }); alert(nieuwe.length+' fiche(s) geïmporteerd.');
+    };
+    reader.readAsText(file,'utf-8'); e.target.value='';
+  }
+
+  const filtersActief = Object.values(filters).some(Boolean);
+  const wisFilters = ()=> setFilters({status:'',projecttype:'',gemeente:'',minWaarde:'',vanaf:''});
+
+  return (
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-40 bg-bts-ink/95 backdrop-blur border-b border-bts-line">
+        <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5">
+            <Logo/>
+            <div><div className="font-display font-bold text-white leading-none">BeTechSmart</div><div className="text-[11px] text-bts-orange -mt-0.5 tracking-wide">FICHENBAK</div></div>
+          </div>
+          <div className="flex-1 min-w-[220px] max-w-2xl relative">
+            <input value={zoek} onChange={e=>zoekWijzig(e.target.value)} placeholder="Zoek op naam, adres, e-mail, telefoon, postcode, projecttype, bedrag…"
+              className="w-full bg-bts-panel2 border border-bts-line rounded-xl pl-10 pr-9 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-bts-orange/60" />
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+            {zoek && <button onClick={()=>zoekWijzig('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">✕</button>}
+            {zoekActief && <div className="absolute -bottom-6 left-1 text-[11px] text-bts-orange">{matchIds.size} fiche(s) komen omhoog</div>}
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <button onClick={undo} disabled={!undoStack.length} title="Laatste wijziging herstellen"
+              className={"px-3 py-2 rounded-lg border text-sm "+(undoStack.length?'border-bts-line text-slate-200 hover:border-bts-orange':'border-bts-line text-slate-600 cursor-not-allowed')}>↶ Ongedaan{undoStack.length?' ('+undoStack.length+')':''}</button>
+            <button onClick={()=>setToonFilters(v=>!v)} className={"px-3 py-2 rounded-lg border text-sm "+(filtersActief?'border-bts-orange text-bts-orange':'border-bts-line text-slate-300 hover:bg-bts-panel2')}>⚙ Filters {filtersActief && '•'}</button>
+            <button onClick={nieuweFiche} className="px-4 py-2 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm hover:bg-bts-orangeDark">+ Nieuwe fiche</button>
+          </div>
+        </div>
+
+        {toonFilters &&
+          <div className="border-t border-bts-line bg-bts-panel">
+            <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap gap-2 items-end">
+              <label className="text-xs text-slate-400">Status<select className={inputCls+' mt-1 py-1.5'} value={filters.status} onChange={e=>setFilters({...filters,status:e.target.value})}><option value="">alle</option>{STATUSSEN.map(s=><option key={s.id}>{s.id}</option>)}</select></label>
+              <label className="text-xs text-slate-400">Projecttype<select className={inputCls+' mt-1 py-1.5'} value={filters.projecttype} onChange={e=>setFilters({...filters,projecttype:e.target.value})}><option value="">alle</option>{PROJECTTYPES.map(t=><option key={t}>{t}</option>)}</select></label>
+              <label className="text-xs text-slate-400">Gemeente<input className={inputCls+' mt-1 py-1.5'} value={filters.gemeente} onChange={e=>setFilters({...filters,gemeente:e.target.value})} placeholder="bv. Gent" /></label>
+              <label className="text-xs text-slate-400">Min. bedrag €<input type="number" className={inputCls+' mt-1 py-1.5 w-28'} value={filters.minWaarde} onChange={e=>setFilters({...filters,minWaarde:e.target.value})} /></label>
+              <label className="text-xs text-slate-400">Aanvraag vanaf<input type="date" className={inputCls+' mt-1 py-1.5'} value={filters.vanaf} onChange={e=>setFilters({...filters,vanaf:e.target.value})} /></label>
+              {filtersActief && <button onClick={wisFilters} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:bg-bts-panel2 text-sm">Wis filters</button>}
+            </div>
+          </div>}
+      </header>
+
+      <main className="max-w-[1600px] mx-auto px-4 py-5">
+        <div className="grid lg:grid-cols-[1fr_340px] gap-4 mb-5">
+          <div className="bg-bts-panel border border-bts-line rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-display font-bold text-white">Dashboard</h3>
+              <div className="text-xs text-slate-400">{fiches.length} fiches · pijplijn <b className="text-bts-orange">{euro(totaleWaarde)}</b></div>
+            </div>
+            <p className="text-[11px] text-slate-500 mb-3">Klik een tegel om enkel die status te tonen. Slepen doe je tussen de bakken hieronder.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+              {STATUSSEN.map(s=>(
+                <StatCard key={s.id} label={s.id} value={tellingen[s.id]} hex={KLEUREN[s.kleur].hex}
+                  active={filters.status===s.id}
+                  onClick={()=> setFilters({...filters, status: filters.status===s.id?'':s.id})} />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-bts-line">
+              {Object.entries(KLEUREN).map(([k,v])=>(<span key={k} className="flex items-center gap-1.5 text-[11px] text-slate-400"><span style={{width:9,height:9,background:v.hex}} className="rounded-full" /> {v.naam}</span>))}
+            </div>
+
+            {/* Omzet & winst per jaar */}
+            <div className="mt-3 pt-3 border-t border-bts-line">
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Omzet &amp; winst per jaar</div>
+              <div className="flex flex-wrap gap-2">
+                {perJaar.map(j=>(
+                  <div key={j.jaar} className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2 min-w-[150px]">
+                    <div className="flex items-baseline justify-between">
+                      <span className="font-display font-bold text-white">{j.jaar}</span>
+                      <span className="text-[10px] text-slate-500">{j.aantal} fiches</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">Omzet <b className="text-slate-200">{euro(j.omzet)}</b></div>
+                    <div className="text-[11px] text-slate-400">Winst <b style={{color:(j.winst>=0?'#4ade80':'#f87171')}}>{euro(j.winst)}</b></div>
+                  </div>
+                ))}
+                {perJaar.length===0 && <span className="text-sm text-slate-500">Nog geen data.</span>}
+              </div>
+            </div>
+          </div>
+          <VandaagPaneel fiches={fiches} onToonInBak={toonInBak} onOpen={openFiche} />
+        </div>
+
+        {/* Actieve filter — "terug"-balk */}
+        {filtersActief &&
+          <div className="mb-3 flex items-center gap-2 flex-wrap bg-bts-panel border border-bts-orange/50 rounded-xl px-3 py-2">
+            <span className="text-sm text-slate-300">Filter actief:</span>
+            {filters.status && <span className="text-xs px-2 py-1 rounded-full bg-bts-orange/15 text-bts-orange">Status: {filters.status}</span>}
+            {filters.projecttype && <span className="text-xs px-2 py-1 rounded-full bg-bts-orange/15 text-bts-orange">Type: {filters.projecttype}</span>}
+            {filters.gemeente && <span className="text-xs px-2 py-1 rounded-full bg-bts-orange/15 text-bts-orange">Gemeente: {filters.gemeente}</span>}
+            {filters.minWaarde && <span className="text-xs px-2 py-1 rounded-full bg-bts-orange/15 text-bts-orange">≥ {euro(filters.minWaarde)}</span>}
+            {filters.vanaf && <span className="text-xs px-2 py-1 rounded-full bg-bts-orange/15 text-bts-orange">Vanaf {toonDatum(filters.vanaf)}</span>}
+            <button onClick={wisFilters} className="ml-auto px-3 py-1.5 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm hover:bg-bts-orangeDark">✕ Toon alle fiches</button>
+          </div>}
+
+        <div className="grid md:grid-cols-3 gap-4">
+          {BAKKEN.map(bak=>(
+            <Bak key={bak.id} bak={bak} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
+              focusId={focusId} firstMatchId={firstMatchId} scrollNonce={scrollNonce}
+              onOpen={openFiche} onDropFiche={dropInBak} drag={{id:drag.id, start:dragStart, end:dragEnd}} />
+          ))}
+        </div>
+
+        <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-slate-400">Data:</span>
+          <button onClick={exporteer} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:border-bts-orange">⬇ Exporteer CSV</button>
+          <button onClick={()=>importRef.current.click()} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:border-bts-orange">⬆ Importeer CSV/Excel</button>
+          <input ref={importRef} type="file" accept=".csv,text/csv" className="hidden" onChange={importeer} />
+          <span className={"ml-auto text-[11px] px-2 py-1 rounded-full "+(storage.persistent?'bg-bts-orange/15 text-bts-orange':'bg-yellow-500/15 text-yellow-400')}>{storage.persistent ? '● Opgeslagen in deze browser (localStorage)' : '○ Tijdelijke opslag (open lokaal voor blijvende opslag)'}</span>
+        </div>
+
+        <footer className="mt-8 text-center text-[11px] text-slate-600">BeTechSmart Fichenbak · v1 · lokale opslag · klaar voor uitbreiding naar Supabase, Billit, Wix & e-mail</footer>
+      </main>
+
+      {modal && <FicheModal fiche={modal} onClose={()=>setModal(null)} onSave={opslaan} onDelete={verwijder} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
