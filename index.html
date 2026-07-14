@@ -1161,6 +1161,7 @@ function App(){
   const [scrollNonce, setScrollNonce] = useState(0);
   const [undoStack, setUndoStack] = useState([]);
   const importRef = useRef(null);
+  const herstelRef = useRef(null);
 
   const snapshot = ()=> setUndoStack(s => [...s.slice(-24), fiches]);
   function undo(){
@@ -1302,6 +1303,26 @@ function App(){
     reader.readAsText(file,'utf-8'); e.target.value='';
   }
 
+  // Volledige back-up (JSON) — bewaart ALLES (offertes, facturatie, aanpassingen, taken, tijdlijn, foto's)
+  function backupJSON(){
+    const blob=new Blob([JSON.stringify(fiches)],{type:'application/json'});
+    const url=URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download='fichenbak-backup-'+vandaag()+'.json'; a.click(); URL.revokeObjectURL(url);
+  }
+  function herstelJSON(e){
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=JSON.parse(ev.target.result);
+        if(!Array.isArray(data)) throw new Error('geen lijst');
+        if(!confirm('Dit VERVANGT alle huidige fiches door de back-up ('+data.length+' fiches). Doorgaan?')) return;
+        setFiches(prev=>{ setUndoStack(s=>[...s.slice(-24), prev]); return data; });
+        alert('Back-up hersteld: '+data.length+' fiches.');
+      }catch(err){ alert('Dit is geen geldig back-up-bestand (.json).'); }
+    };
+    reader.readAsText(file,'utf-8'); e.target.value='';
+  }
   const filtersActief = Object.values(filters).some(Boolean);
   const wisFilters = ()=> setFilters({status:'',projecttype:'',gemeente:'',minWaarde:'',vanaf:''});
 
@@ -1418,6 +1439,10 @@ function App(){
 
         <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
           <span className="text-slate-400">Data:</span>
+          <button onClick={backupJSON} className="px-3 py-1.5 rounded-lg border border-bts-orange/60 text-bts-orange hover:bg-bts-orange/10 font-medium">⬇ Volledige back-up (JSON)</button>
+          <button onClick={()=>herstelRef.current.click()} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:border-bts-orange">⬆ Herstel back-up (JSON)</button>
+          <input ref={herstelRef} type="file" accept=".json,application/json" className="hidden" onChange={herstelJSON} />
+          <span className="text-slate-600">·</span>
           <button onClick={exporteer} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:border-bts-orange">⬇ Exporteer CSV</button>
           <button onClick={()=>importRef.current.click()} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:border-bts-orange">⬆ Importeer CSV/Excel</button>
           <input ref={importRef} type="file" accept=".csv,text/csv" className="hidden" onChange={importeer} />
