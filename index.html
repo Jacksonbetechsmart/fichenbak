@@ -14,6 +14,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   tailwind.config = {
     theme: { extend: {
@@ -90,6 +91,16 @@
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useRef } = React;
+
+/* =========================================================================
+   SUPABASE-KOPPELING  —  VUL HIER JE ANON-SLEUTEL IN
+   ========================================================================= */
+const SUPABASE_URL      = "https://xhonextvbvyjtitdiiri.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_HufBvXxYiPiFXM0Z0WDIWA_uX_QXVha";
+// ==========================================================================
+
+const supaKlaar = (SUPABASE_URL.indexOf('http')===0 && SUPABASE_ANON_KEY.length>20 && SUPABASE_ANON_KEY.indexOf('PLAK_HIER')<0 && window.supabase);
+const supa = supaKlaar ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 /* =========================================================================
    1. CONFIGURATIE
@@ -973,6 +984,50 @@ function VandaagPaneel({fiches, onToonInBak, onOpen}){
 }
 
 /* =========================================================================
+   INLOGSCHERM (Supabase Auth)
+   ========================================================================= */
+function LoginScherm(){
+  const [email, setEmail] = useState('');
+  const [ww, setWw] = useState('');
+  const [fout, setFout] = useState('');
+  const [bezig, setBezig] = useState(false);
+  async function login(){
+    if(bezig) return;
+    setBezig(true); setFout('');
+    try {
+      const { error } = await supa.auth.signInWithPassword({ email:email.trim(), password:ww });
+      if(error) setFout('Inloggen mislukt. Controleer je e-mail en wachtwoord.');
+    } catch(e){ setFout('Er ging iets mis bij het inloggen.'); }
+    setBezig(false);
+  }
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="pop w-full max-w-sm bg-bts-panel border border-bts-line rounded-2xl p-6"
+           style={{borderTop:'4px solid #F26A21'}}>
+        <div className="flex items-center gap-2.5 mb-5">
+          <Logo/>
+          <div><div className="font-display font-bold text-white leading-none">BeTechSmart</div><div className="text-[11px] text-bts-orange -mt-0.5 tracking-wide">FICHENBAK · LOGIN</div></div>
+        </div>
+        <label className="block mb-3">
+          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">E-mail</span>
+          <input type="email" className={inputCls+' mt-1'} value={email} onChange={e=>setEmail(e.target.value)} placeholder="info@tomvanhooijdonk.be" onKeyDown={e=>e.key==='Enter'&&login()} />
+        </label>
+        <label className="block mb-4">
+          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Wachtwoord</span>
+          <input type="password" className={inputCls+' mt-1'} value={ww} onChange={e=>setWw(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()} />
+        </label>
+        {fout && <div className="mb-3 text-sm text-red-400">{fout}</div>}
+        <button onClick={login} disabled={bezig}
+          className="w-full px-4 py-2.5 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm hover:bg-bts-orangeDark disabled:opacity-60">
+          {bezig ? 'Bezig…' : 'Inloggen'}
+        </button>
+        <p className="mt-4 text-[11px] text-slate-500 text-center">Beveiligde toegang · je gegevens staan op je eigen Supabase.</p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
    10. HOOFDAPP
    ========================================================================= */
 
@@ -982,6 +1037,34 @@ function App(){
     if(raw){ try { return JSON.parse(raw); } catch(e){} }
     return seedData();
   });
+  // --- Supabase auth + sync ---
+  const [sessie, setSessie] = useState(null);
+  const [authGecheckt, setAuthGecheckt] = useState(!supa);   // zonder Supabase meteen "klaar"
+  const [geladen, setGeladen] = useState(false);
+  const [sync, setSync] = useState(supa ? 'verbonden' : 'lokaal');
+  const eersteSave = useRef(true);
+
+  useEffect(()=>{
+    if(!supa) return;
+    supa.auth.getSession().then(({data})=>{ setSessie(data.session||null); setAuthGecheckt(true); });
+    const { data:sub } = supa.auth.onAuthStateChange((_e, s)=> setSessie(s||null));
+    return ()=> { try { sub.subscription.unsubscribe(); } catch(e){} };
+  }, []);
+
+  // Data ophalen na inloggen
+  useEffect(()=>{
+    if(!supa || !sessie || geladen) return;
+    (async ()=>{
+      setSync('bezig');
+      const { data, error } = await supa.from('fichenbak').select('state').eq('id','main').maybeSingle();
+      if(error){ setSync('fout'); return; }
+      if(data && data.state){ eersteSave.current = true; setFiches(data.state); }
+      else { await supa.from('fichenbak').upsert({ id:'main', state:fiches, updated_at:new Date().toISOString() }); }
+      setGeladen(true); setSync('verbonden');
+    })();
+  }, [sessie, geladen]);
+
+  async function uitloggen(){ if(supa){ await supa.auth.signOut(); setGeladen(false); } }
   const [zoek, setZoek] = useState('');
   const [modal, setModal] = useState(null);
   const [filters, setFilters] = useState({status:'', projecttype:'', gemeente:'', minWaarde:'', vanaf:''});
@@ -1002,7 +1085,17 @@ function App(){
     });
   }
 
-  useEffect(()=>{ storage.set(LS_KEY, JSON.stringify(fiches)); }, [fiches]);
+  useEffect(()=>{
+    storage.set(LS_KEY, JSON.stringify(fiches));           // lokale cache (altijd)
+    if(!supa || !sessie || !geladen) return;
+    if(eersteSave.current){ eersteSave.current = false; return; }   // niet meteen na het inladen
+    setSync('bezig');
+    const t = setTimeout(async ()=>{
+      const { error } = await supa.from('fichenbak').upsert({ id:'main', state:fiches, updated_at:new Date().toISOString() });
+      setSync(error ? 'fout' : 'verbonden');
+    }, 1200);
+    return ()=> clearTimeout(t);
+  }, [fiches, sessie, geladen]);
 
   const zoekActief = zoek.trim().length>0;
   const matchIds = useMemo(()=>{
@@ -1092,6 +1185,10 @@ function App(){
   const filtersActief = Object.values(filters).some(Boolean);
   const wisFilters = ()=> setFilters({status:'',projecttype:'',gemeente:'',minWaarde:'',vanaf:''});
 
+  // Inlog-slot: met Supabase eerst inloggen
+  if(supa && !authGecheckt) return <div className="min-h-screen flex items-center justify-center text-slate-400">Laden…</div>;
+  if(supa && !sessie) return <LoginScherm/>;
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-40 bg-bts-ink/95 backdrop-blur border-b border-bts-line">
@@ -1108,10 +1205,18 @@ function App(){
             {zoekActief && <div className="absolute -bottom-6 left-1 text-[11px] text-bts-orange">{matchIds.size} fiche(s) komen omhoog</div>}
           </div>
           <div className="flex items-center gap-2 ml-auto">
+            {supa &&
+              <span title="Verbinding met Supabase"
+                className={"hidden sm:inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full "+
+                  (sync==='fout'?'bg-red-500/15 text-red-400':sync==='bezig'?'bg-yellow-500/15 text-yellow-400':'bg-bts-orange/15 text-bts-orange')}>
+                ☁ {sync==='fout'?'fout':sync==='bezig'?'opslaan…':'opgeslagen'}
+              </span>}
             <button onClick={undo} disabled={!undoStack.length} title="Laatste wijziging herstellen"
               className={"px-3 py-2 rounded-lg border text-sm "+(undoStack.length?'border-bts-line text-slate-200 hover:border-bts-orange':'border-bts-line text-slate-600 cursor-not-allowed')}>↶ Ongedaan{undoStack.length?' ('+undoStack.length+')':''}</button>
             <button onClick={()=>setToonFilters(v=>!v)} className={"px-3 py-2 rounded-lg border text-sm "+(filtersActief?'border-bts-orange text-bts-orange':'border-bts-line text-slate-300 hover:bg-bts-panel2')}>⚙ Filters {filtersActief && '•'}</button>
             <button onClick={nieuweFiche} className="px-4 py-2 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm hover:bg-bts-orangeDark">+ Nieuwe fiche</button>
+            {supa && sessie &&
+              <button onClick={uitloggen} title="Uitloggen" className="px-3 py-2 rounded-lg border border-bts-line text-slate-400 hover:text-white hover:border-slate-500 text-sm">Uitloggen</button>}
           </div>
         </div>
 
@@ -1193,7 +1298,7 @@ function App(){
           <button onClick={exporteer} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:border-bts-orange">⬇ Exporteer CSV</button>
           <button onClick={()=>importRef.current.click()} className="px-3 py-1.5 rounded-lg border border-bts-line text-slate-300 hover:border-bts-orange">⬆ Importeer CSV/Excel</button>
           <input ref={importRef} type="file" accept=".csv,text/csv" className="hidden" onChange={importeer} />
-          <span className={"ml-auto text-[11px] px-2 py-1 rounded-full "+(storage.persistent?'bg-bts-orange/15 text-bts-orange':'bg-yellow-500/15 text-yellow-400')}>{storage.persistent ? '● Opgeslagen in deze browser (localStorage)' : '○ Tijdelijke opslag (open lokaal voor blijvende opslag)'}</span>
+          <span className={"ml-auto text-[11px] px-2 py-1 rounded-full "+(supa?(sync==='fout'?'bg-red-500/15 text-red-400':'bg-bts-orange/15 text-bts-orange'):(storage.persistent?'bg-bts-orange/15 text-bts-orange':'bg-yellow-500/15 text-yellow-400'))}>{supa ? (sync==='fout'?'⚠ Verbinding met Supabase mislukt':'☁ Opgeslagen op Supabase (server)') : (storage.persistent ? '● Opgeslagen in deze browser (localStorage)' : '○ Tijdelijke opslag (open lokaal voor blijvende opslag)')}</span>
         </div>
 
         <footer className="mt-8 text-center text-[11px] text-slate-600">BeTechSmart Fichenbak · v1 · lokale opslag · klaar voor uitbreiding naar Supabase, Billit, Wix & e-mail</footer>
