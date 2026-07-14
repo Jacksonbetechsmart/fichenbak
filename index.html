@@ -226,6 +226,17 @@ function rendement(f){
 function ficheSeq(nummer){ const m=(nummer||'').toString().trim().match(/^(\d{4})-0*(\d+)$/); return m?{jaar:m[1], seq:parseInt(m[2])}:null; }
 function ficheJaar(f){ const s=ficheSeq(f.fichenummer); if(s) return s.jaar; if(f.datumAanvraag) return f.datumAanvraag.slice(0,4); return '—'; }
 
+// Historiek op datum sorteren: nieuwste bovenaan, lege datum onderaan
+function sorteerHistoriek(arr){
+  return [...(arr||[])].sort((a,b)=>{
+    const da=a.datum||'', db=b.datum||'';
+    if(!da && !db) return 0;
+    if(!da) return 1;
+    if(!db) return -1;
+    return db.localeCompare(da);
+  });
+}
+
 // Document openen (dataUrl -> blob -> nieuw tabblad; of een http-link)
 function dataUrlNaarBlob(dataUrl){
   const [head, b64] = dataUrl.split(',');
@@ -289,7 +300,7 @@ function toCSV(fiches){
    3. VOORBEELDDATA
    ========================================================================= */
 
-const NIEUW_VELDEN = { foto:'', datumShowroom:'', eersteOfferte:{nummer:'',datum:'',omschrijving:'',prijs:'',btw:21}, uitbreidingen:[], aanpassingen:[], voorschotten:[], reclamebord:false, googleReview:false };
+const NIEUW_VELDEN = { foto:'', datumShowroom:'', eersteOfferte:{nummer:'',datum:'',omschrijving:'',prijs:'',btw:21}, uitbreidingen:[], aanpassingen:[], voorschotten:[], reclamebord:false, googleReview:false, gepind:false, taken:[] };
 
 function seedData(){
   return [
@@ -355,8 +366,8 @@ function seedData(){
         {id:uid(), datum:'2026-05-02', omschrijving:'Programmatie KNX',             werkuren:'12', uurtarief:60, materiaal:'',    marge:''},
       ],
       voorschotten:[
-        {id:uid(), naam:'Voorschot 1', factuurnummer:'F2026-101', bedrag:'3000'},
-        {id:uid(), naam:'Eindfactuur', factuurnummer:'', bedrag:''},
+        {id:uid(), naam:'Voorschot 1', factuurnummer:'F2026-101', datum:'2026-05-10', bedrag:'3000'},
+        {id:uid(), naam:'Eindfactuur', factuurnummer:'', datum:'', bedrag:''},
       ],
       reclamebord:true, googleReview:true,
       historiek:[
@@ -418,7 +429,7 @@ function StatCard({label, value, hex, active, onClick}){
    6. FICHE (gestapelde kaart)
    ========================================================================= */
 
-function FicheCard({fiche, index, lifted, dimmed, scrollNow, scrollNonce, onOpen, onDragStart, onDragEnd, dragging}){
+function FicheCard({fiche, index, lifted, dimmed, scrollNow, scrollNonce, onOpen, onDragStart, onDragEnd, dragging, onTogglePin}){
   const k = kleurVanStatus(fiche.status);
   const ref = useRef(null);
   useEffect(()=>{ if(scrollNow && ref.current){ ref.current.scrollIntoView({behavior:'smooth', block:'center'}); } }, [scrollNow, scrollNonce]);
@@ -441,6 +452,9 @@ function FicheCard({fiche, index, lifted, dimmed, scrollNow, scrollNonce, onOpen
           {fiche.googleReview && <span title="Google review ok">⭐</span>}
           {(fiche.datumVolgendeActie || fiche.postcode) &&
             <span className="text-slate-500 hidden sm:block font-mono">{fiche.datumVolgendeActie ? toonDatum(fiche.datumVolgendeActie) : fiche.postcode}</span>}
+          <button onClick={(e)=>{ e.stopPropagation(); onTogglePin && onTogglePin(fiche); }}
+            title={fiche.gepind ? 'Van “Vandaag te doen” halen' : 'Op “Vandaag te doen” prikken'}
+            className={"ml-0.5 leading-none text-[15px] "+(fiche.gepind?'':'opacity-30 hover:opacity-70')}>📌</button>
         </span>
       </div>
 
@@ -477,7 +491,7 @@ function FicheCard({fiche, index, lifted, dimmed, scrollNow, scrollNonce, onOpen
    7. BAK
    ========================================================================= */
 
-function Bak({bak, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNonce, onOpen, onDropFiche, drag}){
+function Bak({bak, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNonce, onOpen, onDropFiche, drag, onTogglePin}){
   const [over, setOver] = useState(false);
   const geordend = useMemo(()=>{
     if(!zoekActief) return fiches;
@@ -517,7 +531,7 @@ function Bak({bak, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNo
               scrollNow={zoekActief ? (firstMatchId===f.id) : (focusId===f.id)}
               scrollNonce={scrollNonce}
               dragging={drag.id===f.id}
-              onOpen={onOpen} onDragStart={drag.start} onDragEnd={drag.end} />
+              onOpen={onOpen} onDragStart={drag.start} onDragEnd={drag.end} onTogglePin={onTogglePin} />
           ))}
         </div>
       </div>
@@ -548,6 +562,9 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
   const [nieuwDoc, setNieuwDoc] = useState('');
   const [zoom, setZoom] = useState(false);
   const [dragAanpId, setDragAanpId] = useState(null);
+  const [dragUitId, setDragUitId] = useState(null);
+  const [dragVsId, setDragVsId] = useState(null);
+  const [dragLogId, setDragLogId] = useState(null);
   const [undoN, setUndoN] = useState(0);
   const undoRef = useRef([]); const lastUndoRef = useRef(0);
   const isNew = !fiche.__bestaat;
@@ -565,13 +582,35 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
     _setF(prev);
   }
   const set = (k,v) => setF(prev => ({...prev, [k]:v}));
+  // Enter springt naar het volgende invulvak (behalve in tekstvakken, waar Enter een nieuwe regel maakt)
+  function enterNaarVolgende(e){
+    if(e.key!=='Enter') return;
+    const t = e.target;
+    if(!t || t.tagName==='TEXTAREA' || t.tagName==='BUTTON') return;
+    if(t.tagName!=='INPUT' && t.tagName!=='SELECT') return;
+    if(t.type==='file') return;
+    e.preventDefault();
+    const velden = Array.from(e.currentTarget.querySelectorAll('input:not([type=file]), select, textarea'))
+      .filter(el=> !el.disabled && !el.readOnly && el.offsetParent!==null);
+    const i = velden.indexOf(t);
+    if(i>=0 && i<velden.length-1) velden[i+1].focus();
+  }
   const r = rendement(f);
 
   function wijzigStatus(nieuw){ setF(prev => pasStatusToe(prev, nieuw)); }
   const addDoc = (doc)=> setF(prev=>({...prev, documenten:[...(prev.documenten||[]), doc]}));
-  function voegLogToe(){ if(!nieuweLog.trim()) return; set('historiek', [...(f.historiek||[]), {id:uid(), datum:vandaag(), tekst:nieuweLog.trim()}]); setNieuweLog(''); }
+  function voegLogToe(){ if(!nieuweLog.trim()) return; set('historiek', sorteerHistoriek([...(f.historiek||[]), {id:uid(), datum:vandaag(), tekst:nieuweLog.trim()}])); setNieuweLog(''); }
   const setLog = (id,key,val)=> setF(prev=>({...prev, historiek:(prev.historiek||[]).map(h=> h.id===id ? {...h,[key]:val} : h)}));
   const delLog = (id)=> setF(prev=>({...prev, historiek:(prev.historiek||[]).filter(h=>h.id!==id)}));
+  function moveLog(fromId, toId){
+    setF(prev=>{
+      const arr=[...(prev.historiek||[])];
+      const fi=arr.findIndex(a=>a.id===fromId), ti=arr.findIndex(a=>a.id===toId);
+      if(fi<0||ti<0||fi===ti) return prev;
+      const [item]=arr.splice(fi,1); arr.splice(ti,0,item);
+      return {...prev, historiek:arr};
+    });
+  }
   function voegDocToe(){ if(!nieuwDoc.trim()) return; addDoc({id:uid(), naam:nieuwDoc.trim(), link:nieuwDoc.trim(), datum:vandaag()}); setNieuwDoc(''); }
   function bestandToe(e){
     const files=Array.from(e.target.files||[]);
@@ -597,8 +636,17 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
   const setEO = (key,val)=> set('eersteOfferte', {...(f.eersteOfferte||{}), [key]:val});
   // Extra uitbreidingen (bovenop de eerste offerte) — verkoop
   const setUit = (id,key,val)=> set('uitbreidingen', (f.uitbreidingen||[]).map(u=> u.id===id ? {...u,[key]:val} : u));
-  const addUit = ()=> set('uitbreidingen', [...(f.uitbreidingen||[]), {id:uid(), datum:vandaag(), omschrijving:'', prijs:''}]);
+  const addUit = ()=> set('uitbreidingen', [...(f.uitbreidingen||[]), {id:uid(), nummer:'', datum:vandaag(), omschrijving:'', prijs:''}]);
   const delUit = (id)=> set('uitbreidingen', (f.uitbreidingen||[]).filter(u=>u.id!==id));
+  function moveUit(fromId, toId){
+    setF(prev=>{
+      const arr=[...(prev.uitbreidingen||[])];
+      const fi=arr.findIndex(a=>a.id===fromId), ti=arr.findIndex(a=>a.id===toId);
+      if(fi<0||ti<0||fi===ti) return prev;
+      const [item]=arr.splice(fi,1); arr.splice(ti,0,item);
+      return {...prev, uitbreidingen:arr};
+    });
+  }
   // Aanpassingen — de kosten (materiaal + werkuren), aftrekbaar van de omzet
   const setAanp = (id,key,val)=> set('aanpassingen', (f.aanpassingen||[]).map(a=> a.id===id ? {...a,[key]:val} : a));
   const addAanp = ()=> set('aanpassingen', [...(f.aanpassingen||[]), {id:uid(), datum:vandaag(), omschrijving:'', werkuren:'', uurtarief:UURTARIEF_STD, materiaal:'', marge:''}]);
@@ -615,15 +663,22 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
   }
   // Voorschotten / facturatie
   const setVs = (id,key,val)=> set('voorschotten', (f.voorschotten||[]).map(v=> v.id===id ? {...v,[key]:val} : v));
-  const addVs = ()=>{ const n=(f.voorschotten||[]).length; const naam = n===0?'Voorschot 1' : (n===1?'Voorschot 2':'Eindfactuur'); set('voorschotten', [...(f.voorschotten||[]), {id:uid(), naam, factuurnummer:'', bedrag:''}]); };
+  const addVs = ()=>{ const n=(f.voorschotten||[]).length; const naam = n===0?'Voorschot 1' : (n===1?'Voorschot 2':'Eindfactuur'); set('voorschotten', [...(f.voorschotten||[]), {id:uid(), naam, factuurnummer:'', datum:vandaag(), bedrag:''}]); };
   const delVs = (id)=> set('voorschotten', (f.voorschotten||[]).filter(v=>v.id!==id));
-
-  const historiekGesorteerd = [...(f.historiek||[])].sort((a,b)=> (b.datum||'').localeCompare(a.datum||''));
+  function moveVs(fromId, toId){
+    setF(prev=>{
+      const arr=[...(prev.voorschotten||[])];
+      const fi=arr.findIndex(a=>a.id===fromId), ti=arr.findIndex(a=>a.id===toId);
+      if(fi<0||ti<0||fi===ti) return prev;
+      const [item]=arr.splice(fi,1); arr.splice(ti,0,item);
+      return {...prev, voorschotten:arr};
+    });
+  }
 
   return (
     <React.Fragment>
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 md:p-4" onClick={onClose}>
-      <div className="pop bg-bts-panel border border-bts-line rounded-2xl w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden shadow-2xl" onClick={e=>e.stopPropagation()} onPaste={plakFoto}>
+      <div className="pop bg-bts-panel border border-bts-line rounded-2xl w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden shadow-2xl" onClick={e=>e.stopPropagation()} onPaste={plakFoto} onKeyDown={enterNaarVolgende}>
 
         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-bts-line" style={{borderTop:'4px solid '+kleurVanStatus(f.status).hex}}>
           <div className="flex items-center gap-3 min-w-0">
@@ -730,20 +785,30 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
             </div>
 
             <div>
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Historiek / tijdlijn</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Historiek / tijdlijn</span>
+                <button onClick={()=>set('historiek', sorteerHistoriek(f.historiek))} title="Op datum sorteren (nieuwste bovenaan)"
+                  className="text-[11px] px-2 py-0.5 rounded-md bg-bts-panel2 border border-bts-line text-slate-300 hover:border-bts-orange">↕ sorteer op datum</button>
+              </div>
               <div className="mt-1 flex gap-2">
                 <input value={nieuweLog} onChange={e=>setNieuweLog(e.target.value)} placeholder="Wat gebeurde er?" className={inputCls+' text-sm'} onKeyDown={e=>e.key==='Enter'&&voegLogToe()} />
                 <button onClick={voegLogToe} className="px-3 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm">Log</button>
               </div>
               <ol className="mt-2 space-y-1.5 max-h-52 overflow-y-auto scroll-thin pr-1">
-                {historiekGesorteerd.map(h=>(
-                  <li key={h.id} className="flex gap-1.5 items-center">
+                {(f.historiek||[]).map(h=>(
+                  <li key={h.id}
+                    onDragOver={(e)=>e.preventDefault()}
+                    onDrop={(e)=>{ e.preventDefault(); if(dragLogId) moveLog(dragLogId, h.id); setDragLogId(null); }}
+                    className={"flex gap-1.5 items-center "+(dragLogId===h.id?'opacity-40':'')}>
+                    <span draggable onDragStart={()=>setDragLogId(h.id)} onDragEnd={()=>setDragLogId(null)}
+                          title="Versleep om te herschikken"
+                          className="cursor-grab active:cursor-grabbing select-none text-slate-500 hover:text-bts-orange text-xs leading-none shrink-0">⠿</span>
                     <input type="date" value={h.datum||''} onChange={e=>setLog(h.id,'datum',e.target.value)} className={inputCls+' w-32 py-1 text-xs shrink-0'} />
                     <input value={h.tekst||''} onChange={e=>setLog(h.id,'tekst',e.target.value)} className={inputCls+' flex-1 py-1 text-sm'} />
                     <button onClick={()=>delLog(h.id)} title="Verwijder" className="px-2 py-1 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm shrink-0">✕</button>
                   </li>
                 ))}
-                {historiekGesorteerd.length===0 && <li className="text-slate-500 text-sm">Nog geen historiek.</li>}
+                {(f.historiek||[]).length===0 && <li className="text-slate-500 text-sm">Nog geen historiek.</li>}
               </ol>
             </div>
           </div>
@@ -759,23 +824,17 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
           {/* Eerste offerte */}
           <div className="rounded-lg border border-bts-line bg-bts-panel/50 p-3">
             <div className="text-[12px] font-semibold text-bts-orange uppercase tracking-wide mb-2">Eerste offerte</div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <Veld label="Offertenummer"><input className={inputCls} value={(f.eersteOfferte||{}).nummer||''} onChange={e=>setEO('nummer',e.target.value)} placeholder="2026-…" /></Veld>
-              <Veld label="Datum"><input type="date" className={inputCls} value={(f.eersteOfferte||{}).datum||''} onChange={e=>setEO('datum',e.target.value)} /></Veld>
-              <Veld label="Omschrijving"><input className={inputCls} value={(f.eersteOfferte||{}).omschrijving||''} onChange={e=>setEO('omschrijving',e.target.value)} placeholder="bv. KNX + kastbouw" /></Veld>
+            <div className="hidden sm:grid grid-cols-12 gap-2 text-[10px] uppercase text-slate-500 px-1 mb-1">
+              <span className="col-span-2">Offerte/factuur</span><span className="col-span-2">Datum</span><span className="col-span-4">Omschrijving</span><span className="col-span-2">Prijs excl. BTW €</span><span className="col-span-2">BTW</span>
             </div>
-            <div className="grid grid-cols-3 gap-2 mt-2">
-              <Veld label="BTW">
-                <select className={inputCls} value={(f.eersteOfferte||{}).btw || 21} onChange={e=>setEO('btw',e.target.value)}>
-                  <option value={6}>6%</option><option value={21}>21%</option>
-                </select>
-              </Veld>
-              <Veld label="Prijs excl. BTW €">
-                <input type="number" className={inputCls} value={(f.eersteOfferte||{}).prijs||''} onChange={e=>setEO('prijs',e.target.value)} placeholder="bv. 8500" />
-              </Veld>
-              <Veld label="Prijs incl. BTW €">
-                <div className={inputCls+' bg-bts-panel font-semibold text-white flex items-center'}>{euro(r.offerteIncl) || '€ 0'}</div>
-              </Veld>
+            <div className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center">
+              <input className={inputCls+' sm:col-span-2 py-1.5'} value={(f.eersteOfferte||{}).nummer||''} onChange={e=>setEO('nummer',e.target.value)} placeholder="nr." />
+              <input type="date" className={inputCls+' sm:col-span-2 py-1.5'} value={(f.eersteOfferte||{}).datum||''} onChange={e=>setEO('datum',e.target.value)} />
+              <input className={inputCls+' sm:col-span-4 py-1.5'} value={(f.eersteOfferte||{}).omschrijving||''} onChange={e=>setEO('omschrijving',e.target.value)} placeholder="bv. KNX + kastbouw" />
+              <input type="number" className={inputCls+' sm:col-span-2 py-1.5'} value={(f.eersteOfferte||{}).prijs||''} onChange={e=>setEO('prijs',e.target.value)} placeholder="bv. 8500" />
+              <select className={inputCls+' sm:col-span-2 py-1.5'} value={(f.eersteOfferte||{}).btw || 21} onChange={e=>setEO('btw',e.target.value)}>
+                <option value={6}>6%</option><option value={21}>21%</option>
+              </select>
             </div>
 
             {/* Extra uitbreidingen (komen bovenop de eerste offerte) */}
@@ -786,13 +845,20 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
               </div>
               <div className="space-y-2">
                 <div className="hidden sm:grid grid-cols-12 gap-2 text-[10px] uppercase text-slate-500 px-1">
-                  <span className="col-span-3">Datum</span><span className="col-span-6">Omschrijving</span><span className="col-span-3">Prijs excl. BTW €</span>
+                  <span className="col-span-1"></span><span className="col-span-2">Offerte/factuur</span><span className="col-span-2">Datum</span><span className="col-span-4">Omschrijving</span><span className="col-span-3">Prijs excl. BTW €</span>
                 </div>
                 {(f.uitbreidingen||[]).length===0 && <p className="text-sm text-slate-500">Geen extra's. Klik “+ toevoegen” voor meerwerk bovenop de offerte.</p>}
                 {(f.uitbreidingen||[]).map(u=>(
-                  <div key={u.id} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center">
-                    <input type="date" className={inputCls+' sm:col-span-3 py-1.5'} value={u.datum} onChange={e=>setUit(u.id,'datum',e.target.value)} />
-                    <input className={inputCls+' sm:col-span-6 py-1.5'} value={u.omschrijving} onChange={e=>setUit(u.id,'omschrijving',e.target.value)} placeholder="bv. extra circuit / dimmers" />
+                  <div key={u.id}
+                    onDragOver={(e)=>e.preventDefault()}
+                    onDrop={(e)=>{ e.preventDefault(); if(dragUitId) moveUit(dragUitId, u.id); setDragUitId(null); }}
+                    className={"grid grid-cols-2 sm:grid-cols-12 gap-2 items-center rounded-lg "+(dragUitId===u.id?'opacity-40':'')}>
+                    <span draggable onDragStart={()=>setDragUitId(u.id)} onDragEnd={()=>setDragUitId(null)}
+                          title="Versleep om de volgorde te wijzigen"
+                          className="sm:col-span-1 cursor-grab active:cursor-grabbing select-none text-center text-slate-500 hover:text-bts-orange text-sm leading-none">⠿</span>
+                    <input className={inputCls+' sm:col-span-2 py-1.5'} value={u.nummer||''} onChange={e=>setUit(u.id,'nummer',e.target.value)} placeholder="nr." />
+                    <input type="date" className={inputCls+' sm:col-span-2 py-1.5'} value={u.datum} onChange={e=>setUit(u.id,'datum',e.target.value)} />
+                    <input className={inputCls+' sm:col-span-4 py-1.5'} value={u.omschrijving} onChange={e=>setUit(u.id,'omschrijving',e.target.value)} placeholder="bv. extra circuit / dimmers" />
                     <div className="flex gap-1 sm:col-span-3">
                       <input type="number" className={inputCls+' py-1.5'} value={u.prijs} onChange={e=>setUit(u.id,'prijs',e.target.value)} placeholder="0" />
                       <button onClick={()=>delUit(u.id)} className="px-2 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm">✕</button>
@@ -800,7 +866,7 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
                   </div>
                 ))}
               </div>
-              <p className="text-[10.5px] text-slate-500 mt-2">Eerste offerte + uitbreidingen = <b className="text-slate-300">omzet / projecttotaal ({euro(r.omzet)} excl.)</b>. De aanpassingen hieronder worden hiervan afgetrokken.</p>
+              <p className="text-[10.5px] text-slate-500 mt-2">Eerste offerte + uitbreidingen = <b className="text-slate-300">omzet / projecttotaal ({euro(r.omzet)} excl.)</b>. De aanpassingen hieronder worden hiervan afgetrokken. Sleep uitbreidingen met ⠿ om te herschikken.</p>
             </div>
           </div>
 
@@ -829,7 +895,7 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
                   className={"grid grid-cols-2 md:grid-cols-12 gap-2 items-center rounded-lg "+(dragAanpId===a.id?'opacity-40':'')}>
                   <span draggable onDragStart={()=>setDragAanpId(a.id)} onDragEnd={()=>setDragAanpId(null)}
                         title="Versleep om de volgorde te wijzigen"
-                        className="md:col-span-1 cursor-grab active:cursor-grabbing select-none text-center text-slate-500 hover:text-bts-orange text-lg leading-none">⠿</span>
+                        className="md:col-span-1 cursor-grab active:cursor-grabbing select-none text-center text-slate-500 hover:text-bts-orange text-sm leading-none">⠿</span>
                   <input type="date" className={inputCls+' md:col-span-2 py-1.5'} value={a.datum} onChange={e=>setAanp(a.id,'datum',e.target.value)} />
                   <input className={inputCls+' md:col-span-2 py-1.5'} value={a.omschrijving} onChange={e=>setAanp(a.id,'omschrijving',e.target.value)} placeholder="bv. Kast + zekeringen" />
                   <input type="number" className={inputCls+' md:col-span-2 py-1.5'} value={a.materiaal} onChange={e=>setAanp(a.id,'materiaal',e.target.value)} placeholder="0" />
@@ -899,23 +965,32 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
 
             <div className="space-y-2">
               <div className="hidden sm:grid grid-cols-12 gap-2 text-[10px] uppercase text-slate-500 px-1">
-                <span className="col-span-4">Benaming</span><span className="col-span-3">Factuurnummer</span><span className="col-span-2">Bedrag excl. €</span><span className="col-span-2">Incl. BTW €</span><span className="col-span-1"></span>
+                <span className="col-span-1"></span><span className="col-span-3">Benaming</span><span className="col-span-2">Factuur</span><span className="col-span-2">Datum</span><span className="col-span-2">Bedrag excl. €</span><span className="col-span-2">Incl. BTW €</span>
               </div>
               {(f.voorschotten||[]).length===0 && <p className="text-sm text-slate-500">Nog geen voorschotten. Klik “+ voorschot / factuur”.</p>}
               {(f.voorschotten||[]).map(v=>{
                 const incl = (Number(v.bedrag)||0) * (1 + r.btw/100);
                 return (
-                  <div key={v.id} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center">
-                    <input className={inputCls+' sm:col-span-4 py-1.5'} value={v.naam} onChange={e=>setVs(v.id,'naam',e.target.value)} placeholder="Voorschot 1 / Eindfactuur" />
-                    <input className={inputCls+' sm:col-span-3 py-1.5'} value={v.factuurnummer} onChange={e=>setVs(v.id,'factuurnummer',e.target.value)} placeholder="factuurnr." />
+                  <div key={v.id}
+                    onDragOver={(e)=>e.preventDefault()}
+                    onDrop={(e)=>{ e.preventDefault(); if(dragVsId) moveVs(dragVsId, v.id); setDragVsId(null); }}
+                    className={"grid grid-cols-2 sm:grid-cols-12 gap-2 items-center rounded-lg "+(dragVsId===v.id?'opacity-40':'')}>
+                    <span draggable onDragStart={()=>setDragVsId(v.id)} onDragEnd={()=>setDragVsId(null)}
+                          title="Versleep om de volgorde te wijzigen"
+                          className="sm:col-span-1 cursor-grab active:cursor-grabbing select-none text-center text-slate-500 hover:text-bts-orange text-sm leading-none">⠿</span>
+                    <input className={inputCls+' sm:col-span-3 py-1.5'} value={v.naam} onChange={e=>setVs(v.id,'naam',e.target.value)} placeholder="Voorschot 1 / Eindfactuur" />
+                    <input className={inputCls+' sm:col-span-2 py-1.5'} value={v.factuurnummer} onChange={e=>setVs(v.id,'factuurnummer',e.target.value)} placeholder="factuurnr." />
+                    <input type="date" className={inputCls+' sm:col-span-2 py-1.5'} value={v.datum||''} onChange={e=>setVs(v.id,'datum',e.target.value)} />
                     <input type="number" className={inputCls+' sm:col-span-2 py-1.5'} value={v.bedrag} onChange={e=>setVs(v.id,'bedrag',e.target.value)} placeholder="0" />
-                    <span className="sm:col-span-2 rounded-lg bg-bts-panel border border-bts-line px-2 py-1.5 text-sm text-slate-300 text-right">{euro(Math.round(incl*100)/100)}</span>
-                    <button onClick={()=>delVs(v.id)} className="sm:col-span-1 px-2 py-1.5 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm">✕</button>
+                    <div className="flex gap-1 items-center sm:col-span-2">
+                      <span className="flex-1 rounded-lg bg-bts-panel border border-bts-line px-2 py-1.5 text-sm text-slate-300 text-right">{euro(Math.round(incl*100)/100)}</span>
+                      <button onClick={()=>delVs(v.id)} className="px-2 py-1.5 rounded-lg border border-bts-line text-slate-500 hover:text-red-400 hover:border-red-400/50 text-sm">✕</button>
+                    </div>
                   </div>
                 );
               })}
             </div>
-            <p className="text-[10.5px] text-slate-500 mt-2">Je geeft het bedrag <b>excl. BTW</b> in; incl. BTW wordt automatisch berekend ({r.btw}%). Resttotaal = projecttotaal − alle voorschotten.</p>
+            <p className="text-[10.5px] text-slate-500 mt-2">Je geeft het bedrag <b>excl. BTW</b> in; incl. BTW wordt automatisch berekend ({r.btw}%). De <b>datum</b> bepaalt in welk jaar deze factuur meetelt in het dashboard. Sleep met ⠿ om te herschikken.</p>
           </div>
         </div>
 
@@ -946,39 +1021,51 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
    9. VANDAAG TE DOEN
    ========================================================================= */
 
-function VandaagPaneel({fiches, onToonInBak, onOpen}){
-  const vd = vandaag();
-  const teDoen = fiches
-    .filter(f => (f.datumVolgendeActie && f.datumVolgendeActie <= vd) || ['Reminder sturen','Bellen','Offerte maken'].includes(f.status))
-    .filter(f => !['Gewonnen','Verloren','Afgewerkt'].includes(f.status))
-    .sort((a,b)=> (a.datumVolgendeActie||'9999').localeCompare(b.datumVolgendeActie||'9999'));
+function VandaagPaneel({fiches, onToonInBak, onOpen, onTogglePin, onTaakAdd, onTaakSet, onTaakDel}){
+  const gepind = fiches.filter(f => f.gepind);
 
   return (
     <div className="bg-bts-panel border border-bts-line rounded-2xl p-4">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-lg">☀️</span><h3 className="font-display font-bold text-white">Vandaag te doen</h3>
-        <span className="ml-auto text-xs font-mono px-2 py-0.5 rounded-full bg-bts-orange/20 text-bts-orange">{teDoen.length}</span>
+        <span className="ml-auto text-xs font-mono px-2 py-0.5 rounded-full bg-bts-orange/20 text-bts-orange">{gepind.length}</span>
       </div>
-      {teDoen.length===0
-        ? <p className="text-sm text-slate-500">Niets dringend. Alles onder controle. ✅</p>
-        : <ul className="space-y-1.5 max-h-64 overflow-y-auto scroll-thin pr-1">
-            {teDoen.map(f=>{
-              const laat = f.datumVolgendeActie && f.datumVolgendeActie < vd;
-              const bak = BAK_MAP[f.bak||'nieuw'];
-              return (
-                <li key={f.id} className="flex items-center gap-2 bg-bts-panel2 rounded-lg px-2 py-2">
-                  <button onClick={()=>onToonInBak(f)} title="Toon deze fiche in zijn bak" className="flex items-center gap-2 flex-1 min-w-0 text-left">
+
+      {gepind.length===0
+        ? <p className="text-sm text-slate-500">Niets te doen. Prik een klant met 📌 om hem hier te zetten. ✅</p>
+        : <div className="space-y-2">
+          {gepind.map(f=>{
+            const bak = BAK_MAP[f.bak||'nieuw'];
+            const taken = f.taken||[];
+            return (
+              <div key={f.id} className="bg-bts-panel2 rounded-lg p-2.5 border border-bts-orange/30">
+                <div className="flex items-center gap-2">
+                  <span className="text-bts-orange">📌</span>
+                  <button onClick={()=>onToonInBak(f)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
                     <StatusDot status={f.status} />
                     <span className="min-w-0">
-                      <span className="block text-sm text-slate-200 truncate"><b>{f.naam}</b> · {f.volgendeActie || f.status}</span>
-                      <span className="block text-[10.5px] text-slate-500 truncate">📦 {bak?bak.titel:'—'}{f.datumVolgendeActie?' · '+(laat?'⚠ ':'')+toonDatum(f.datumVolgendeActie):''}</span>
+                      <span className="block text-sm font-semibold text-slate-100 truncate">{f.naam || 'Naamloos'}</span>
+                      <span className="block text-[10.5px] text-slate-500 truncate">📦 {bak?bak.titel:'—'}</span>
                     </span>
                   </button>
-                  <button onClick={()=>onOpen(f)} title="Open fiche" className="shrink-0 text-xs px-2 py-1 rounded-md border border-bts-line text-slate-300 hover:border-bts-orange hover:text-bts-orange">✏ open</button>
-                </li>
-              );
-            })}
-          </ul>}
+                  <button onClick={()=>onOpen(f)} title="Open fiche" className="shrink-0 text-xs px-2 py-1 rounded-md border border-bts-line text-slate-300 hover:border-bts-orange hover:text-bts-orange">✏</button>
+                  <button onClick={()=>onTogglePin(f)} title="Klaar — van de lijst halen (taken komen in de historiek)" className="shrink-0 text-xs px-2 py-1 rounded-md border border-bts-line text-slate-400 hover:border-red-400/60 hover:text-red-400">📌✕</button>
+                </div>
+                <ul className="mt-2 space-y-1 pl-1">
+                  {taken.map(t=>(
+                    <li key={t.id} className="flex items-center gap-2">
+                      <input type="checkbox" checked={!!t.klaar} onChange={e=>onTaakSet(f.id, t.id, 'klaar', e.target.checked)} className="accent-bts-orange w-4 h-4 shrink-0" />
+                      <input value={t.tekst} onChange={e=>onTaakSet(f.id, t.id, 'tekst', e.target.value)} placeholder="wat moet er gebeuren?"
+                        className={"flex-1 bg-transparent border-b border-bts-line focus:border-bts-orange outline-none text-sm py-0.5 "+(t.klaar?'line-through text-slate-500':'text-slate-200')} />
+                      <button onClick={()=>onTaakDel(f.id, t.id)} className="shrink-0 text-slate-600 hover:text-red-400 text-sm">✕</button>
+                    </li>
+                  ))}
+                </ul>
+                <button onClick={()=>onTaakAdd(f.id)} className="mt-1.5 text-[11px] px-2 py-0.5 rounded-md bg-bts-panel border border-bts-line text-slate-300 hover:border-bts-orange">+ taak</button>
+              </div>
+            );
+          })}
+        </div>}
     </div>
   );
 }
@@ -1122,10 +1209,28 @@ function App(){
   const tellingen = useMemo(()=>{ const t={}; STATUSSEN.forEach(s=> t[s.id]=0); fiches.forEach(f=>{ if(t[f.status]!==undefined) t[f.status]++; }); return t; }, [fiches]);
   const totaleWaarde = fiches.reduce((s,f)=> s+(Number(f.waarde)||0), 0);
 
-  // Omzet & winst per jaar (op basis van het jaartal in het fichenummer, anders de aanvraagdatum)
+  // Omzet & winst per jaar — ENKEL op basis van echte facturen/voorschotten (met datum + bedrag).
+  // Een offerte zonder factuur = nog geen inkomsten en telt dus niet mee.
   const perJaar = useMemo(()=>{
     const m={};
-    fiches.forEach(f=>{ const j=ficheJaar(f); const r=rendement(f); if(!m[j]) m[j]={jaar:j, aantal:0, omzet:0, winst:0}; m[j].aantal++; m[j].omzet+=r.omzet; m[j].winst+=r.winst; });
+    const zorg=(j)=>{ if(!m[j]) m[j]={jaar:j, aantal:0, omzet:0, winst:0, verdiend:0}; return m[j]; };
+    fiches.forEach(f=>{
+      const r = rendement(f);
+      const facturen = (f.voorschotten||[])
+        .filter(v => v.datum && (Number(v.bedrag)||0)>0)
+        .sort((a,b)=> String(a.datum).localeCompare(String(b.datum)));
+      if(!facturen.length || r.omzet<=0) return;          // geen echte factuur → telt niet mee
+      facturen.forEach(v=>{
+        const j = String(v.datum).slice(0,4);
+        const bedrag = Number(v.bedrag)||0;
+        const fractie = bedrag / r.omzet;                 // aandeel van het project dat gefactureerd is
+        const b = zorg(j);
+        b.omzet    += bedrag;                             // echte gefactureerde omzet (excl. BTW)
+        b.winst    += r.winst * fractie;                  // winst naar rato van wat gefactureerd is
+        b.verdiend += r.materiaalMarge * fractie;         // verdiende materiaalmarge naar rato
+      });
+      zorg(String(facturen[0].datum).slice(0,4)).aantal++; // project 1× tellen in het jaar van de 1ste factuur
+    });
     return Object.values(m).sort((a,b)=> String(b.jaar).localeCompare(String(a.jaar)));
   }, [fiches]);
 
@@ -1149,6 +1254,21 @@ function App(){
   }
   function openFiche(f){ setFocusId(null); setModal({...f, __bestaat:true}); }
   function toonInBak(f){ setZoek(''); setFocusId(f.id); setScrollNonce(n=>n+1); }
+  function pinToggle(f){
+    snapshot();
+    setFiches(prev=>prev.map(x=>{
+      if(x.id!==f.id) return x;
+      if(x.gepind){
+        const gedaan = (x.taken||[]).filter(t=> (t.tekst||'').trim());
+        const nieuwe = gedaan.map(t=> ({id:uid(), datum:vandaag(), tekst:'✓ '+t.tekst.trim()}));
+        return {...x, gepind:false, taken:[], historiek:sorteerHistoriek([...(x.historiek||[]), ...nieuwe])};
+      }
+      return {...x, gepind:true, taken:x.taken||[]};
+    }));
+  }
+  function taakAdd(id){ setFiches(prev=>prev.map(x=> x.id===id ? {...x, taken:[...(x.taken||[]), {id:uid(), tekst:'', klaar:false}]} : x)); }
+  function taakSet(id, tid, key, val){ setFiches(prev=>prev.map(x=> x.id===id ? {...x, taken:(x.taken||[]).map(t=> t.id===tid?{...t,[key]:val}:t)} : x)); }
+  function taakDel(id, tid){ setFiches(prev=>prev.map(x=> x.id===id ? {...x, taken:(x.taken||[]).filter(t=>t.id!==tid)} : x)); }
   function zoekWijzig(v){ setZoek(v); setFocusId(null); }
 
   const dragStart = (e,f)=>{ setDrag({id:f.id, fiche:f}); e.dataTransfer.effectAllowed='move'; };
@@ -1257,20 +1377,22 @@ function App(){
               <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Omzet &amp; winst per jaar</div>
               <div className="flex flex-wrap gap-2">
                 {perJaar.map(j=>(
-                  <div key={j.jaar} className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2 min-w-[150px]">
+                  <div key={j.jaar} className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2 min-w-[170px]">
                     <div className="flex items-baseline justify-between">
                       <span className="font-display font-bold text-white">{j.jaar}</span>
                       <span className="text-[10px] text-slate-500">{j.aantal} fiches</span>
                     </div>
-                    <div className="text-[11px] text-slate-400 mt-0.5">Omzet <b className="text-slate-200">{euro(j.omzet)}</b></div>
-                    <div className="text-[11px] text-slate-400">Winst <b style={{color:(j.winst>=0?'#4ade80':'#f87171')}}>{euro(j.winst)}</b></div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">Gefactureerde omzet <b className="text-slate-200">{euro(j.omzet)}</b></div>
+                    <div className="text-[11px] text-slate-400">Verdiende materiaalmarge <b style={{color:'#4ade80'}}>{euro(j.verdiend)}</b></div>
+                    <div className="text-[11px] text-slate-500">Winst (op gefactureerd) <b style={{color:(j.winst>=0?'#7ee0a4':'#f87171')}}>{euro(j.winst)}</b></div>
                   </div>
                 ))}
                 {perJaar.length===0 && <span className="text-sm text-slate-500">Nog geen data.</span>}
               </div>
+              <p className="text-[10px] text-slate-500 mt-2">Enkel <b>echte facturen</b> (voorschot/factuur met datum + bedrag) tellen mee, in het jaar van hun datum. Een offerte zonder factuur = nog geen inkomsten en telt niet mee. Winst en marge worden meegeteld naar verhouding van wat al gefactureerd is.</p>
             </div>
           </div>
-          <VandaagPaneel fiches={fiches} onToonInBak={toonInBak} onOpen={openFiche} />
+          <VandaagPaneel fiches={fiches} onToonInBak={toonInBak} onOpen={openFiche} onTogglePin={pinToggle} onTaakAdd={taakAdd} onTaakSet={taakSet} onTaakDel={taakDel} />
         </div>
 
         {/* Actieve filter — "terug"-balk */}
@@ -1288,6 +1410,7 @@ function App(){
         <div className="grid md:grid-cols-3 gap-4">
           {BAKKEN.map(bak=>(
             <Bak key={bak.id} bak={bak} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
+              onTogglePin={pinToggle}
               focusId={focusId} firstMatchId={firstMatchId} scrollNonce={scrollNonce}
               onOpen={openFiche} onDropFiche={dropInBak} drag={{id:drag.id, start:dragStart, end:dragEnd}} />
           ))}
