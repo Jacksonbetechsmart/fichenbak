@@ -611,7 +611,7 @@ function Veld({label, children}){
 }
 const inputCls = "w-full bg-bts-panel2 border border-bts-line rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-bts-orange/60";
 
-function FicheModal({fiche, onClose, onSave, onDelete}){
+function FicheModal({fiche, onClose, onSave, onDelete, nummersInGebruik}){
   const [f, _setF] = useState({ eersteOfferte:{nummer:'',datum:'',omschrijving:'',prijs:'',btw:21}, uitbreidingen:[], aanpassingen:[], voorschotten:[], ...fiche });
   const [nieuweLog, setNieuweLog] = useState('');
   const [nieuwDoc, setNieuwDoc] = useState('');
@@ -651,6 +651,7 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
     if(i>=0 && i<velden.length-1) velden[i+1].focus();
   }
   const r = rendement(f);
+  const dubbelNr = !!(f.fichenummer||'').trim() && (nummersInGebruik||[]).includes((f.fichenummer||'').trim());
 
   function wijzigStatus(nieuw){ setF(prev => pasStatusToe(prev, nieuw)); }
   const addDoc = (doc)=> setF(prev=>({...prev, documenten:[...(prev.documenten||[]), doc]}));
@@ -751,7 +752,10 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
           {/* LINKS: contactgegevens */}
           <div className="space-y-3">
             <div className="grid grid-cols-3 gap-2">
-              <Veld label="Fiche #"><input className={inputCls} value={f.fichenummer} onChange={e=>set('fichenummer',e.target.value)} /></Veld>
+              <Veld label="Fiche #">
+                <input className={inputCls+(dubbelNr?' border-red-500 text-red-300':'')} value={f.fichenummer} onChange={e=>set('fichenummer',e.target.value)} />
+                {dubbelNr && <p className="text-[10.5px] text-red-400 mt-0.5">Dit nummer is al in gebruik bij een andere fiche.</p>}
+              </Veld>
               <div className="col-span-2"><Veld label="Naam"><input className={inputCls} value={f.naam} onChange={e=>set('naam',e.target.value)} /></Veld></div>
             </div>
             <Veld label="Bedrijf"><input className={inputCls} value={f.bedrijf} onChange={e=>set('bedrijf',e.target.value)} /></Veld>
@@ -887,7 +891,8 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
               <input type="date" className={inputCls+' sm:col-span-2 py-1.5'} value={(f.eersteOfferte||{}).datum||''} onChange={e=>setEO('datum',e.target.value)} />
               <input className={inputCls+' sm:col-span-4 py-1.5'} value={(f.eersteOfferte||{}).omschrijving||''} onChange={e=>setEO('omschrijving',e.target.value)} placeholder="bv. KNX + kastbouw" />
               <input type="number" className={inputCls+' sm:col-span-2 py-1.5'} value={(f.eersteOfferte||{}).prijs||''} onChange={e=>setEO('prijs',e.target.value)} placeholder="bv. 8500" />
-              <select className={inputCls+' sm:col-span-2 py-1.5'} value={(f.eersteOfferte||{}).btw || 21} onChange={e=>setEO('btw',e.target.value)}>
+              <select className={inputCls+' sm:col-span-2 py-1.5'} value={((f.eersteOfferte||{}).btw===''||(f.eersteOfferte||{}).btw==null) ? 21 : (f.eersteOfferte||{}).btw} onChange={e=>setEO('btw',e.target.value)}>
+                <option value={0}>0% medecontractant</option>
                 <option value={6}>6%</option><option value={21}>21%</option>
               </select>
             </div>
@@ -921,7 +926,7 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
                   </div>
                 ))}
               </div>
-              <p className="text-[10.5px] text-slate-500 mt-2">Eerste offerte + uitbreidingen = <b className="text-slate-300">omzet / projecttotaal ({euro(r.omzet)} excl.)</b>. De aanpassingen hieronder worden hiervan afgetrokken. Sleep uitbreidingen met ⠿ om te herschikken.</p>
+              <p className="text-[10.5px] text-slate-500 mt-2">Eerste offerte + uitbreidingen = <b className="text-slate-300">projecttotaal ({euro(r.omzet)} excl.)</b>. De aanpassingen hieronder worden hiervan afgetrokken. Sleep uitbreidingen met ⠿ om te herschikken.</p>
             </div>
           </div>
 
@@ -967,9 +972,9 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
             <p className="text-[10.5px] text-slate-500 mt-2">Alle bedragen <b>excl. BTW</b>. Kostprijs = materiaal (aankoop) + (uren × tarief). Deze kosten worden van de omzet afgetrokken; je <b>marge op het materiaal blijft winst</b> (zie samenvatting). Sleep met ⠿ om te herschikken.</p>
           </div>
 
-          {/* Samenvatting: omzet (offerte + uitbreidingen) − aanpassingen = winst */}
+          {/* Samenvatting: projecttotaal (offerte) vs. gefactureerde omzet → winst */}
           <div className="mt-4 space-y-2">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
               <div className="rounded-lg bg-bts-panel2 border border-bts-line px-3 py-2">
                 <div className="text-[11px] text-slate-400">Eerste offerte</div><div className="font-display font-bold text-slate-200">{euro(r.offerteExcl)}</div>
               </div>
@@ -977,7 +982,12 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
                 <div className="text-[11px] text-slate-400">+ Uitbreidingen</div><div className="font-display font-bold text-slate-200">{euro(r.uitbreidingenExcl)}</div>
               </div>
               <div className="rounded-lg px-3 py-2 border border-bts-orange/50 bg-bts-orange/10">
-                <div className="text-[11px] text-bts-orange">= Omzet / projecttotaal (excl.)</div><div className="font-display font-bold text-white">{euro(r.omzet)}</div>
+                <div className="text-[11px] text-bts-orange">= Projecttotaal (excl.)</div><div className="font-display font-bold text-white">{euro(r.omzet)}</div>
+              </div>
+              <div className={"rounded-lg px-3 py-2 border "+(r.voorschottenExcl>0?'border-bts-line bg-bts-panel2':'border-dashed border-bts-line bg-bts-panel2/40')}>
+                <div className="text-[11px] text-slate-400">Omzet (gefactureerd, excl.)</div>
+                <div className={"font-display font-bold "+(r.voorschottenExcl>0?'text-white':'text-slate-500')}>{euro(r.voorschottenExcl)}</div>
+                <div className="text-[10px] text-slate-500">{r.voorschottenExcl>0 ? Math.round(r.voorschottenExcl/(r.omzet||1)*100)+'% gefactureerd' : 'nog niets gefactureerd'}</div>
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
@@ -988,10 +998,11 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
                 <div className="text-[11px] text-slate-400">+ Marge op materiaal (winst)</div><div className="font-display font-bold text-slate-300">{euro(r.materiaalMarge)}</div>
               </div>
               <div className="rounded-lg px-3 py-2 border" style={{background:(r.winst>=0?'#25C167':'#EF4444')+'1a', borderColor:(r.winst>=0?'#25C167':'#EF4444')+'66'}}>
-                <div className="text-[11px]" style={{color:(r.winst>=0?'#7ee0a4':'#fca5a5')}}>= Winst · marge</div>
+                <div className="text-[11px]" style={{color:(r.winst>=0?'#7ee0a4':'#fca5a5')}}>= Verwachte winst · marge</div>
                 <div className="font-display font-bold" style={{color:(r.winst>=0?'#4ade80':'#f87171')}}>{euro(r.winst)} · {r.marge.toFixed(1)}%</div>
               </div>
             </div>
+            <p className="text-[10.5px] text-slate-500">Het <b>projecttotaal</b> is wat je offreerde. Er is pas <b>omzet</b> zodra je een voorschot of factuur invult hieronder — daarvoor is er niets verkocht. De <b>verwachte winst</b> is wat je overhoudt als het project volledig uitgevoerd en gefactureerd is.</p>
           </div>
 
           {/* Facturatie & voorschotten */}
@@ -1057,7 +1068,9 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
             <button onClick={modalUndo} disabled={!undoN} title="Laatste wijziging in deze fiche ongedaan maken"
               className={"px-4 py-2 rounded-lg border text-sm "+(undoN?'border-bts-line text-slate-200 hover:border-bts-orange':'border-bts-line text-slate-600 cursor-not-allowed')}>↶ Ongedaan{undoN?' ('+undoN+')':''}</button>
             <button onClick={onClose} className="px-4 py-2 rounded-lg border border-bts-line text-slate-300 hover:bg-bts-panel2 text-sm">Annuleren</button>
-            <button onClick={()=>{ const c={...f}; delete c.__bestaat; onSave(c); }} className="px-5 py-2 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm hover:bg-bts-orangeDark">Opslaan</button>
+            <button onClick={()=>{ const c={...f}; delete c.__bestaat; onSave(c); }} disabled={dubbelNr}
+              title={dubbelNr?'Kies eerst een uniek fichenummer':''}
+              className={"px-5 py-2 rounded-lg font-semibold text-sm "+(dubbelNr?'bg-slate-700 text-slate-500 cursor-not-allowed':'bg-bts-orange text-bts-ink hover:bg-bts-orangeDark')}>Opslaan</button>
           </div>
         </div>
       </div>
@@ -1559,7 +1572,8 @@ function App(){
         <footer className="mt-8 text-center text-[11px] text-slate-600">BeTechSmart Fichenbak · v1 · lokale opslag · klaar voor uitbreiding naar Supabase, Billit, Wix & e-mail</footer>
       </main>
 
-      {modal && <FicheModal fiche={modal} onClose={()=>setModal(null)} onSave={opslaan} onDelete={verwijder} />}
+      {modal && <FicheModal fiche={modal} onClose={()=>setModal(null)} onSave={opslaan} onDelete={verwijder}
+        nummersInGebruik={fiches.filter(x=>x.id!==modal.id).map(x=>(x.fichenummer||'').trim()).filter(Boolean)} />}
     </div>
   );
 }
