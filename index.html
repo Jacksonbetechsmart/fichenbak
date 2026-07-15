@@ -134,8 +134,8 @@ const kleurVanStatus = (s) => KLEUREN[(STATUS_MAP[s]||{}).kleur || 'grijs'];
 const BAKKEN = [
   { id:'nieuw',      titel:'Leads nog niet geantwoord',     sub:'Nog te beantwoorden',        kolom:'links'  },
   { id:'leadsbezig', titel:'Leads in behandeling',          sub:'Contact gelegd · loopt',     kolom:'links'  },
-  { id:'lopend',     titel:'In behandeling in het magazijn',sub:'Lopende projecten',          kolom:'midden' },
-  { id:'afgewerkt',  titel:'Afgewerkte klanten',            sub:'Gewonnen · klaar',           kolom:'rechts' },
+  { id:'lopend',     titel:'In behandeling in het magazijn',sub:'Gewonnen · lopende projecten', kolom:'midden' },
+  { id:'afgewerkt',  titel:'Afgewerkte klanten',            sub:'Klaar',                      kolom:'rechts' },
   { id:'verloren',   titel:'Verloren klanten',              sub:'Niet doorgegaan',            kolom:'rechts', rood:true },
 ];
 const BAK_MAP = Object.fromEntries(BAKKEN.map(b=>[b.id,b]));
@@ -1078,6 +1078,15 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
 
 function VandaagPaneel({fiches, onToonInBak, onOpen, onTogglePin, onTaakAdd, onTaakSet, onTaakDel, bakNamen}){
   const gepind = fiches.filter(f => f.gepind);
+  const [openId, setOpenId] = useState(null);
+  const vorigeRef = useRef([]);
+  const idsKey = gepind.map(f=>f.id).join(',');
+  useEffect(()=>{
+    const ids = gepind.map(f=>f.id);
+    const nieuw = ids.find(id => !vorigeRef.current.includes(id));
+    if(nieuw) setOpenId(nieuw);                    // net geprikt → meteen openklappen
+    vorigeRef.current = ids;
+  }, [idsKey]);
 
   return (
     <div className="bg-bts-panel border border-bts-line rounded-2xl p-4">
@@ -1088,35 +1097,51 @@ function VandaagPaneel({fiches, onToonInBak, onOpen, onTogglePin, onTaakAdd, onT
 
       {gepind.length===0
         ? <p className="text-sm text-slate-500">Niets te doen. Prik een klant met 📌 om hem hier te zetten. ✅</p>
-        : <div className="space-y-2">
-          {gepind.map(f=>{
+        : <div className="max-h-[60vh] overflow-y-auto scroll-thin pr-1 pt-1">
+          {gepind.map((f,i)=>{
             const bak = BAK_MAP[f.bak||'nieuw'];
             const taken = f.taken||[];
+            const open = openId===f.id;
+            const teDoen = taken.filter(t=>!t.klaar).length;
             return (
-              <div key={f.id} className="bg-bts-panel2 rounded-lg p-2.5 border border-bts-orange/30">
-                <div className="flex items-center gap-2">
-                  <span className="text-bts-orange">📌</span>
-                  <button onClick={()=>onToonInBak(f)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
-                    <StatusDot status={f.status} />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-slate-100 truncate">{f.naam || 'Naamloos'}</span>
-                      <span className="block text-[10.5px] text-slate-500 truncate">📦 {(bakNamen&&bakNamen[f.bak||'nieuw']) || (bak?bak.titel:'—')}</span>
-                    </span>
-                  </button>
-                  <button onClick={()=>onOpen(f)} title="Open fiche" className="shrink-0 text-xs px-2 py-1 rounded-md border border-bts-line text-slate-300 hover:border-bts-orange hover:text-bts-orange">✏</button>
-                  <button onClick={()=>onTogglePin(f)} title="Klaar — van de lijst halen (taken komen in de historiek)" className="shrink-0 text-xs px-2 py-1 rounded-md border border-bts-line text-slate-400 hover:border-red-400/60 hover:text-red-400">📌✕</button>
+              <div key={f.id}
+                style={open || i===0 ? {} : {marginTop:'-6px'}}
+                className={"bg-bts-panel2 rounded-lg border transition-all relative "+
+                  (open ? 'border-bts-orange/60 shadow-lg z-10 mb-2 mt-2' : 'border-bts-orange/25 hover:border-bts-orange/50')}>
+                {/* kopregel — klik om open/dicht te klappen */}
+                <div className="flex items-center gap-2 px-2.5 py-2 cursor-pointer" onClick={()=>setOpenId(open?null:f.id)}>
+                  <span className="text-bts-orange text-sm shrink-0">📌</span>
+                  <StatusDot status={f.status} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-slate-100 truncate">{f.naam || 'Naamloos'}</span>
+                    {open && <span className="block text-[10.5px] text-slate-500 truncate">📦 {(bakNamen&&bakNamen[f.bak||'nieuw']) || (bak?bak.titel:'—')}</span>}
+                  </span>
+                  {!open && teDoen>0 &&
+                    <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-bts-orange/20 text-bts-orange">{teDoen}</span>}
+                  <span className="shrink-0 text-slate-500 text-xs">{open?'▾':'▸'}</span>
                 </div>
-                <ul className="mt-2 space-y-1 pl-1">
-                  {taken.map(t=>(
-                    <li key={t.id} className="flex items-center gap-2">
-                      <input type="checkbox" checked={!!t.klaar} onChange={e=>onTaakSet(f.id, t.id, 'klaar', e.target.checked)} className="accent-bts-orange w-4 h-4 shrink-0" />
-                      <input value={t.tekst} onChange={e=>onTaakSet(f.id, t.id, 'tekst', e.target.value)} placeholder="wat moet er gebeuren?"
-                        className={"flex-1 bg-transparent border-b border-bts-line focus:border-bts-orange outline-none text-sm py-0.5 "+(t.klaar?'line-through text-slate-500':'text-slate-200')} />
-                      <button onClick={()=>onTaakDel(f.id, t.id)} className="shrink-0 text-slate-600 hover:text-red-400 text-sm">✕</button>
-                    </li>
-                  ))}
-                </ul>
-                <button onClick={()=>onTaakAdd(f.id)} className="mt-1.5 text-[11px] px-2 py-0.5 rounded-md bg-bts-panel border border-bts-line text-slate-300 hover:border-bts-orange">+ taak</button>
+
+                {/* opengeklapt: taken + knoppen */}
+                {open &&
+                  <div className="px-2.5 pb-2.5">
+                    <ul className="space-y-1 pl-1">
+                      {taken.map(t=>(
+                        <li key={t.id} className="flex items-center gap-2">
+                          <input type="checkbox" checked={!!t.klaar} onChange={e=>onTaakSet(f.id, t.id, 'klaar', e.target.checked)} className="accent-bts-orange w-4 h-4 shrink-0" />
+                          <input value={t.tekst} onChange={e=>onTaakSet(f.id, t.id, 'tekst', e.target.value)} placeholder="wat moet er gebeuren?"
+                            className={"flex-1 bg-transparent border-b border-bts-line focus:border-bts-orange outline-none text-sm py-0.5 "+(t.klaar?'line-through text-slate-500':'text-slate-200')} />
+                          <button onClick={()=>onTaakDel(f.id, t.id)} className="shrink-0 text-slate-600 hover:text-red-400 text-sm">✕</button>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button onClick={()=>onTaakAdd(f.id)} className="text-[11px] px-2 py-0.5 rounded-md bg-bts-panel border border-bts-line text-slate-300 hover:border-bts-orange">+ taak</button>
+                      <button onClick={()=>onToonInBak(f)} title="Toon in zijn bak" className="text-[11px] px-2 py-0.5 rounded-md bg-bts-panel border border-bts-line text-slate-300 hover:border-bts-orange">📦 tonen</button>
+                      <button onClick={()=>onOpen(f)} title="Open fiche" className="text-[11px] px-2 py-0.5 rounded-md bg-bts-panel border border-bts-line text-slate-300 hover:border-bts-orange">✏ open</button>
+                      <button onClick={()=>{ setOpenId(null); onTogglePin(f); }} title="Klaar — van de lijst halen (taken komen in de historiek)"
+                        className="ml-auto text-[11px] px-2 py-0.5 rounded-md bg-bts-panel border border-bts-line text-slate-400 hover:border-red-400/60 hover:text-red-400">📌✕ klaar</button>
+                    </div>
+                  </div>}
               </div>
             );
           })}
@@ -1504,20 +1529,19 @@ function App(){
                       onTogglePin:pinToggle, onHernoem:hernoemBak}} />
 
           {BAKKEN.filter(b=>b.kolom==='midden').map(bak=>(
-            <Bak key={bak.id} bak={bak} titel={bakNamen[bak.id]} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
-              onTogglePin={pinToggle} onHernoem={hernoemBak}
-              focusId={focusId} firstMatchId={firstMatchId} scrollNonce={scrollNonce}
-              onOpen={openFiche} onDropFiche={dropInBak} drag={{id:drag.id, start:dragStart, end:dragEnd}} />
-          ))}
-
-          <div className="flex flex-col gap-4 min-w-0">
-            {BAKKEN.filter(b=>b.kolom==='rechts').map(bak=>(
-              <Bak key={bak.id} bak={bak} titel={bakNamen[bak.id]} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
-                onTogglePin={pinToggle} onHernoem={hernoemBak} compact
+            <div key={bak.id} className="flex flex-col min-w-0">
+              <div className="hidden md:block h-[30px] mb-1.5" />
+              <Bak bak={bak} titel={bakNamen[bak.id]} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
+                onTogglePin={pinToggle} onHernoem={hernoemBak}
                 focusId={focusId} firstMatchId={firstMatchId} scrollNonce={scrollNonce}
                 onOpen={openFiche} onDropFiche={dropInBak} drag={{id:drag.id, start:dragStart, end:dragEnd}} />
-            ))}
-          </div>
+            </div>
+          ))}
+
+          <TabKolom bakken={BAKKEN.filter(b=>b.kolom==='rechts')} titels={bakNamen} perBak={perBak}
+            gedeeld={{matchIds, zoekActief, focusId, firstMatchId, scrollNonce, onOpen:openFiche,
+                      onDropFiche:dropInBak, drag:{id:drag.id, start:dragStart, end:dragEnd},
+                      onTogglePin:pinToggle, onHernoem:hernoemBak}} />
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
