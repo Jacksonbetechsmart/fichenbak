@@ -237,6 +237,13 @@ function rendement(f){
 
 // Fichenummer: haal jaar + volgnummer uit "2026-316"
 function ficheSeq(nummer){ const m=(nummer||'').toString().trim().match(/^(\d{4})-0*(\d+)$/); return m?{jaar:m[1], seq:parseInt(m[2])}:null; }
+
+// Datum van de laatste actie in de historiek (voor op de fichekaart)
+function laatsteActie(f){
+  const datums = (f.historiek||[]).map(h=>h.datum).filter(Boolean);
+  if(!datums.length) return f.datumAanvraag || '';
+  return datums.reduce((a,b)=> b>a?b:a);
+}
 function ficheJaar(f){ const s=ficheSeq(f.fichenummer); if(s) return s.jaar; if(f.datumAanvraag) return f.datumAanvraag.slice(0,4); return '—'; }
 
 // Historiek op datum sorteren: nieuwste bovenaan, lege datum onderaan
@@ -463,8 +470,8 @@ function FicheCard({fiche, index, lifted, dimmed, scrollNow, scrollNonce, onOpen
         <span className="shrink-0 flex items-center gap-1 text-[11px]">
           {fiche.reclamebord && <span title="Reclamebordje meegegeven">🪧</span>}
           {fiche.googleReview && <span title="Google review ok">⭐</span>}
-          {(fiche.datumVolgendeActie || fiche.postcode) &&
-            <span className="text-slate-500 hidden sm:block font-mono">{fiche.datumVolgendeActie ? toonDatum(fiche.datumVolgendeActie) : fiche.postcode}</span>}
+          {laatsteActie(fiche) &&
+            <span className="text-slate-500 hidden sm:block font-mono" title="Laatste actie in de historiek">{toonDatum(laatsteActie(fiche))}</span>}
           <button onClick={(e)=>{ e.stopPropagation(); onTogglePin && onTogglePin(fiche); }}
             title={fiche.gepind ? 'Van “Vandaag te doen” halen' : 'Op “Vandaag te doen” prikken'}
             className={"ml-0.5 leading-none text-[15px] "+(fiche.gepind?'':'opacity-30 hover:opacity-70')}>📌</button>
@@ -1355,7 +1362,7 @@ function App(){
     const jaar = String(new Date().getFullYear());
     let maxSeq = 0;
     fiches.forEach(f=>{ const s=ficheSeq(f.fichenummer); if(s && s.jaar===jaar && s.seq>maxSeq) maxSeq=s.seq; });
-    const nummer = jaar + '-' + String(maxSeq+1).padStart(3,'0');
+    const nummer = jaar + '-' + String(maxSeq+1);
     setModal({...LEEG_FICHE(), fichenummer:nummer});
   }
   function openFiche(f){ setFocusId(null); setModal({...f, __bestaat:true}); }
