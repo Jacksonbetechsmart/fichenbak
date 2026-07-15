@@ -125,18 +125,21 @@ const STATUSSEN = [
   { id:'Bellen', kleur:'rood' },
   { id:'Afspraak showroom', kleur:'blauw' },
   { id:'Gewonnen', kleur:'groen' },
-  { id:'Verloren', kleur:'grijs' },
+  { id:'Verloren', kleur:'rood' },
   { id:'Afgewerkt', kleur:'grijs' },
 ];
 const STATUS_MAP = Object.fromEntries(STATUSSEN.map(s => [s.id, s]));
 const kleurVanStatus = (s) => KLEUREN[(STATUS_MAP[s]||{}).kleur || 'grijs'];
 
 const BAKKEN = [
-  { id:'nieuw', titel:'Nieuwe aanvragen', sub:'Leads & toekomstige klanten' },
-  { id:'lopend', titel:'Lopende projecten', sub:'In behandeling' },
-  { id:'afgewerkt', titel:'Afgewerkte klanten', sub:'Gewonnen · verloren · klaar' },
+  { id:'nieuw',      titel:'Leads nog niet geantwoord',     sub:'Nog te beantwoorden',        kolom:'links'  },
+  { id:'leadsbezig', titel:'Leads in behandeling',          sub:'Contact gelegd · loopt',     kolom:'links'  },
+  { id:'lopend',     titel:'In behandeling in het magazijn',sub:'Lopende projecten',          kolom:'midden' },
+  { id:'afgewerkt',  titel:'Afgewerkte klanten',            sub:'Gewonnen · klaar',           kolom:'rechts' },
+  { id:'verloren',   titel:'Verloren klanten',              sub:'Niet doorgegaan',            kolom:'rechts', rood:true },
 ];
 const BAK_MAP = Object.fromEntries(BAKKEN.map(b=>[b.id,b]));
+const STANDAARD_BAKNAMEN = Object.fromEntries(BAKKEN.map(b=>[b.id,b.titel]));
 
 const BRONNEN      = ['webshop','mail','beurs','mond-aan-mond','bestaande klant','Wix','Vecolux'];
 const TYPES_KLANT  = ['particulier','installateur','architect','bedrijf'];
@@ -147,8 +150,18 @@ const FICHE_OVERLAP = 16;              // overlap van de gestapelde fiches (px).
 
 function bakVoorStatus(status){
   if (['Nieuwe aanvraag'].includes(status)) return 'nieuw';
-  if (['Gewonnen','Verloren','Afgewerkt'].includes(status)) return 'afgewerkt';
+  if (['Verloren'].includes(status)) return 'verloren';
+  if (['Gewonnen','Afgewerkt'].includes(status)) return 'afgewerkt';
   return 'lopend';
+}
+
+// Oude fiches (3 bakken) netjes in de nieuwe bakken zetten
+function migreerBakken(lijst){
+  return (lijst||[]).map(f=>{
+    if(f.status==='Verloren' && f.bak!=='verloren') return {...f, bak:'verloren'};
+    if(!f.bak || !BAK_MAP[f.bak]) return {...f, bak:bakVoorStatus(f.status)};
+    return f;
+  });
 }
 
 /* =========================================================================
@@ -491,24 +504,34 @@ function FicheCard({fiche, index, lifted, dimmed, scrollNow, scrollNonce, onOpen
    7. BAK
    ========================================================================= */
 
-function Bak({bak, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNonce, onOpen, onDropFiche, drag, onTogglePin}){
+function Bak({bak, titel, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNonce, onOpen, onDropFiche, drag, onTogglePin, onHernoem, compact}){
   const [over, setOver] = useState(false);
+  const [bewerk, setBewerk] = useState(false);
   const geordend = useMemo(()=>{
     if(!zoekActief) return fiches;
     return [...fiches].sort((a,b)=> (matchIds.has(a.id)?0:1) - (matchIds.has(b.id)?0:1));
   },[fiches, matchIds, zoekActief]);
   const totaalWaarde = fiches.reduce((s,f)=> s + (Number(f.waarde)||0), 0);
-  const expand = zoekActief || !!focusId;
+  const expand = (zoekActief || !!focusId) && !compact;
 
   return (
     <section className="flex flex-col min-w-0">
-      <header className="flex items-baseline justify-between px-1 mb-2">
-        <div>
-          <h2 className="font-display font-bold text-white text-base">{bak.titel}</h2>
-          <p className="text-[11px] text-slate-500 -mt-0.5">{bak.sub}</p>
+      <header className="flex items-baseline justify-between px-1 mb-2 gap-2">
+        <div className="min-w-0">
+          {bewerk
+            ? <input autoFocus value={titel} onChange={e=>onHernoem(bak.id, e.target.value)}
+                onBlur={()=>setBewerk(false)} onKeyDown={e=>{ if(e.key==='Enter'||e.key==='Escape') setBewerk(false); }}
+                className="bg-bts-panel2 border border-bts-orange rounded-md px-1.5 py-0.5 text-white font-display font-bold text-base w-full outline-none" />
+            : <h2 onDoubleClick={()=>setBewerk(true)} title="Dubbelklik om te hernoemen"
+                  className="font-display font-bold text-white text-base truncate cursor-text hover:text-bts-orange">{titel}
+                <button onClick={()=>setBewerk(true)} className="ml-1 text-[11px] text-slate-600 hover:text-bts-orange align-middle">✎</button>
+              </h2>}
+          <p className="text-[11px] text-slate-500 -mt-0.5 truncate">{bak.sub}</p>
         </div>
-        <div className="text-right">
-          <div className="font-mono text-bts-orange font-semibold text-sm">{fiches.length}</div>
+        <div className="text-right shrink-0">
+          <div className={"font-mono font-semibold text-sm "+(bak.rood
+            ? 'inline-flex items-center justify-center min-w-[22px] h-[22px] px-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/40'
+            : 'text-bts-orange')}>{fiches.length}</div>
           {totaalWaarde>0 && <div className="text-[10px] text-slate-500">{euro(totaalWaarde)}</div>}
         </div>
       </header>
@@ -517,11 +540,11 @@ function Bak({bak, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNo
         onDragOver={(e)=>{ e.preventDefault(); setOver(true); }}
         onDragLeave={()=>setOver(false)}
         onDrop={(e)=>{ e.preventDefault(); setOver(false); onDropFiche(bak.id); }}
-        className={"bak-shell rounded-2xl p-3.5 pt-4 flex-1 min-h-[320px] "+(over?'bak-drop-active':'')}
+        className={"bak-shell rounded-2xl p-3.5 pt-4 flex-1 "+(compact?'min-h-[180px] ':'min-h-[320px] ')+(over?'bak-drop-active':'')}
       >
         <div className="bak-rail h-1.5 rounded-full mb-3 mx-1" />
         <div className={"pr-1 pt-3 "+(expand?'':'scroll-thin overflow-y-auto')}
-             style={expand?{}:{maxHeight:'calc(100vh - 300px)'}}>
+             style={expand?{}:{maxHeight: compact ? '38vh' : 'calc(100vh - 300px)'}}>
           {geordend.length===0 &&
             <div className="text-center text-slate-500 text-[13px] py-12 border border-dashed border-slate-700 rounded-xl">Sleep hier een fiche naartoe</div>}
           {geordend.map((f,i) => (
@@ -535,6 +558,38 @@ function Bak({bak, fiches, matchIds, zoekActief, focusId, firstMatchId, scrollNo
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+// Twee bakken achter elkaar: klik op het achterste tabblad om het naar voren te halen.
+// Je kan een fiche ook rechtstreeks op een tabblad droppen.
+function TabKolom({bakken, titels, perBak, gedeeld}){
+  const [actief, setActief] = useState(bakken[0].id);
+  const [overTab, setOverTab] = useState(null);
+  const huidig = BAK_MAP[actief] || bakken[0];
+  return (
+    <section className="flex flex-col min-w-0">
+      <div className="flex gap-1 mb-1.5">
+        {bakken.map(b=>{
+          const aan = b.id===actief;
+          const n = perBak(b.id).length;
+          return (
+            <button key={b.id} onClick={()=>setActief(b.id)}
+              onDragOver={(e)=>{ e.preventDefault(); setOverTab(b.id); }}
+              onDragLeave={()=>setOverTab(null)}
+              onDrop={(e)=>{ e.preventDefault(); setOverTab(null); setActief(b.id); gedeeld.onDropFiche(b.id); }}
+              title={titels[b.id]}
+              className={"flex-1 min-w-0 px-2.5 py-1.5 rounded-t-lg border text-[11px] font-semibold truncate transition-all "+
+                (aan ? 'bg-bts-panel border-bts-line border-b-transparent text-bts-orange -mb-px'
+                     : 'bg-bts-panel2/60 border-transparent text-slate-500 hover:text-slate-300')+
+                (overTab===b.id ? ' ring-1 ring-bts-orange' : '')}>
+              {titels[b.id]} <span className={"ml-1 font-mono "+(b.rood?'text-red-400':'')}>{n}</span>
+            </button>
+          );
+        })}
+      </div>
+      <Bak {...gedeeld} bak={huidig} titel={titels[huidig.id]} fiches={perBak(huidig.id)} />
     </section>
   );
 }
@@ -1021,7 +1076,7 @@ function FicheModal({fiche, onClose, onSave, onDelete}){
    9. VANDAAG TE DOEN
    ========================================================================= */
 
-function VandaagPaneel({fiches, onToonInBak, onOpen, onTogglePin, onTaakAdd, onTaakSet, onTaakDel}){
+function VandaagPaneel({fiches, onToonInBak, onOpen, onTogglePin, onTaakAdd, onTaakSet, onTaakDel, bakNamen}){
   const gepind = fiches.filter(f => f.gepind);
 
   return (
@@ -1045,7 +1100,7 @@ function VandaagPaneel({fiches, onToonInBak, onOpen, onTogglePin, onTaakAdd, onT
                     <StatusDot status={f.status} />
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-slate-100 truncate">{f.naam || 'Naamloos'}</span>
-                      <span className="block text-[10.5px] text-slate-500 truncate">📦 {bak?bak.titel:'—'}</span>
+                      <span className="block text-[10.5px] text-slate-500 truncate">📦 {(bakNamen&&bakNamen[f.bak||'nieuw']) || (bak?bak.titel:'—')}</span>
                     </span>
                   </button>
                   <button onClick={()=>onOpen(f)} title="Open fiche" className="shrink-0 text-xs px-2 py-1 rounded-md border border-bts-line text-slate-300 hover:border-bts-orange hover:text-bts-orange">✏</button>
@@ -1119,11 +1174,18 @@ function LoginScherm(){
    ========================================================================= */
 
 function App(){
-  const [fiches, setFiches] = useState(()=>{
+  const beginState = (()=>{
     const raw = storage.get(LS_KEY);
-    if(raw){ try { return JSON.parse(raw); } catch(e){} }
-    return seedData();
-  });
+    if(raw){ try {
+      const d = JSON.parse(raw);
+      if(Array.isArray(d)) return {fiches:migreerBakken(d), bakNamen:{...STANDAARD_BAKNAMEN}};
+      return {fiches:migreerBakken(d.fiches||[]), bakNamen:{...STANDAARD_BAKNAMEN, ...(d.bakNamen||{})}};
+    } catch(e){} }
+    return {fiches:migreerBakken(seedData()), bakNamen:{...STANDAARD_BAKNAMEN}};
+  })();
+  const [fiches, setFiches] = useState(beginState.fiches);
+  const [bakNamen, setBakNamen] = useState(beginState.bakNamen);
+  const hernoemBak = (id, naam)=> setBakNamen(prev=>({...prev, [id]:naam}));
   // --- Supabase auth + sync ---
   const [sessie, setSessie] = useState(null);
   const [authGecheckt, setAuthGecheckt] = useState(!supa);   // zonder Supabase meteen "klaar"
@@ -1145,8 +1207,13 @@ function App(){
       setSync('bezig');
       const { data, error } = await supa.from('fichenbak').select('state').eq('id','main').maybeSingle();
       if(error){ setSync('fout'); return; }
-      if(data && data.state){ eersteSave.current = true; setFiches(data.state); }
-      else { await supa.from('fichenbak').upsert({ id:'main', state:fiches, updated_at:new Date().toISOString() }); }
+      if(data && data.state){
+        eersteSave.current = true;
+        const s = data.state;
+        if(Array.isArray(s)){ setFiches(migreerBakken(s)); }
+        else { setFiches(migreerBakken(s.fiches||[])); if(s.bakNamen) setBakNamen({...STANDAARD_BAKNAMEN, ...s.bakNamen}); }
+      }
+      else { await supa.from('fichenbak').upsert({ id:'main', state:{fiches, bakNamen}, updated_at:new Date().toISOString() }); }
       setGeladen(true); setSync('verbonden');
     })();
   }, [sessie, geladen]);
@@ -1174,16 +1241,16 @@ function App(){
   }
 
   useEffect(()=>{
-    storage.set(LS_KEY, JSON.stringify(fiches));           // lokale cache (altijd)
+    storage.set(LS_KEY, JSON.stringify({fiches, bakNamen}));   // lokale cache (altijd)
     if(!supa || !sessie || !geladen) return;
     if(eersteSave.current){ eersteSave.current = false; return; }   // niet meteen na het inladen
     setSync('bezig');
     const t = setTimeout(async ()=>{
-      const { error } = await supa.from('fichenbak').upsert({ id:'main', state:fiches, updated_at:new Date().toISOString() });
+      const { error } = await supa.from('fichenbak').upsert({ id:'main', state:{fiches, bakNamen}, updated_at:new Date().toISOString() });
       setSync(error ? 'fout' : 'verbonden');
     }, 1200);
     return ()=> clearTimeout(t);
-  }, [fiches, sessie, geladen]);
+  }, [fiches, bakNamen, sessie, geladen]);
 
   const zoekActief = zoek.trim().length>0;
   const matchIds = useMemo(()=>{
@@ -1305,7 +1372,7 @@ function App(){
 
   // Volledige back-up (JSON) — bewaart ALLES (offertes, facturatie, aanpassingen, taken, tijdlijn, foto's)
   function backupJSON(){
-    const blob=new Blob([JSON.stringify(fiches)],{type:'application/json'});
+    const blob=new Blob([JSON.stringify({fiches, bakNamen})],{type:'application/json'});
     const url=URL.createObjectURL(blob); const a=document.createElement('a');
     a.href=url; a.download='fichenbak-backup-'+vandaag()+'.json'; a.click(); URL.revokeObjectURL(url);
   }
@@ -1315,10 +1382,12 @@ function App(){
     reader.onload=ev=>{
       try{
         const data=JSON.parse(ev.target.result);
-        if(!Array.isArray(data)) throw new Error('geen lijst');
-        if(!confirm('Dit VERVANGT alle huidige fiches door de back-up ('+data.length+' fiches). Doorgaan?')) return;
-        setFiches(prev=>{ setUndoStack(s=>[...s.slice(-24), prev]); return data; });
-        alert('Back-up hersteld: '+data.length+' fiches.');
+        const lijst = Array.isArray(data) ? data : data.fiches;
+        if(!Array.isArray(lijst)) throw new Error('geen lijst');
+        if(!confirm('Dit VERVANGT alle huidige fiches door de back-up ('+lijst.length+' fiches). Doorgaan?')) return;
+        setFiches(prev=>{ setUndoStack(s=>[...s.slice(-24), prev]); return migreerBakken(lijst); });
+        if(!Array.isArray(data) && data.bakNamen) setBakNamen({...STANDAARD_BAKNAMEN, ...data.bakNamen});
+        alert('Back-up hersteld: '+lijst.length+' fiches.');
       }catch(err){ alert('Dit is geen geldig back-up-bestand (.json).'); }
     };
     reader.readAsText(file,'utf-8'); e.target.value='';
@@ -1413,7 +1482,7 @@ function App(){
               <p className="text-[10px] text-slate-500 mt-2">Enkel <b>echte facturen</b> (voorschot/factuur met datum + bedrag) tellen mee, in het jaar van hun datum. Een offerte zonder factuur = nog geen inkomsten en telt niet mee. Winst en marge worden meegeteld naar verhouding van wat al gefactureerd is.</p>
             </div>
           </div>
-          <VandaagPaneel fiches={fiches} onToonInBak={toonInBak} onOpen={openFiche} onTogglePin={pinToggle} onTaakAdd={taakAdd} onTaakSet={taakSet} onTaakDel={taakDel} />
+          <VandaagPaneel fiches={fiches} onToonInBak={toonInBak} onOpen={openFiche} onTogglePin={pinToggle} onTaakAdd={taakAdd} onTaakSet={taakSet} onTaakDel={taakDel} bakNamen={bakNamen} />
         </div>
 
         {/* Actieve filter — "terug"-balk */}
@@ -1428,13 +1497,27 @@ function App(){
             <button onClick={wisFilters} className="ml-auto px-3 py-1.5 rounded-lg bg-bts-orange text-bts-ink font-semibold text-sm hover:bg-bts-orangeDark">✕ Toon alle fiches</button>
           </div>}
 
-        <div className="grid md:grid-cols-3 gap-4">
-          {BAKKEN.map(bak=>(
-            <Bak key={bak.id} bak={bak} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
-              onTogglePin={pinToggle}
+        <div className="grid md:grid-cols-3 gap-4 items-start">
+          <TabKolom bakken={BAKKEN.filter(b=>b.kolom==='links')} titels={bakNamen} perBak={perBak}
+            gedeeld={{matchIds, zoekActief, focusId, firstMatchId, scrollNonce, onOpen:openFiche,
+                      onDropFiche:dropInBak, drag:{id:drag.id, start:dragStart, end:dragEnd},
+                      onTogglePin:pinToggle, onHernoem:hernoemBak}} />
+
+          {BAKKEN.filter(b=>b.kolom==='midden').map(bak=>(
+            <Bak key={bak.id} bak={bak} titel={bakNamen[bak.id]} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
+              onTogglePin={pinToggle} onHernoem={hernoemBak}
               focusId={focusId} firstMatchId={firstMatchId} scrollNonce={scrollNonce}
               onOpen={openFiche} onDropFiche={dropInBak} drag={{id:drag.id, start:dragStart, end:dragEnd}} />
           ))}
+
+          <div className="flex flex-col gap-4 min-w-0">
+            {BAKKEN.filter(b=>b.kolom==='rechts').map(bak=>(
+              <Bak key={bak.id} bak={bak} titel={bakNamen[bak.id]} fiches={perBak(bak.id)} matchIds={matchIds} zoekActief={zoekActief}
+                onTogglePin={pinToggle} onHernoem={hernoemBak} compact
+                focusId={focusId} firstMatchId={firstMatchId} scrollNonce={scrollNonce}
+                onOpen={openFiche} onDropFiche={dropInBak} drag={{id:drag.id, start:dragStart, end:dragEnd}} />
+            ))}
+          </div>
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-3 text-sm">
