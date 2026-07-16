@@ -222,7 +222,7 @@ function rendement(f){
   const arbeid    = lijnen.reduce((s,l)=>{ const uur=(l.uurtarief===''||l.uurtarief==null)?UURTARIEF_STD:(Number(l.uurtarief)||0); return s + (Number(l.werkuren)||0)*uur; }, 0);
   const kosten = materiaal + arbeid;
 
-  const winst = omzet - kosten + materiaalMarge;                        // omzet − (materiaal aankoop + uren) + marge op materiaal
+  const winst = omzet - kosten;                                         // projecttotaal − (materiaal aankoop + uren × tarief)
   const marge = omzet>0 ? (winst/omzet*100) : 0;
 
   const voorschottenExcl = (f.voorschotten||[]).reduce((s,v)=> s + (Number(v.bedrag)||0), 0);   // ingevoerd = excl. BTW
@@ -976,7 +976,7 @@ function FicheModal({fiche, onClose, onSave, onDelete, nummersInGebruik}){
                 </div>
               ))}
             </div>
-            <p className="text-[10.5px] text-slate-500 mt-2">Alle bedragen <b>excl. BTW</b>. Kostprijs = materiaal (aankoop) + (uren × tarief). Deze kosten worden van de omzet afgetrokken; je <b>marge op het materiaal blijft winst</b> (zie samenvatting). Sleep met ⠿ om te herschikken.</p>
+            <p className="text-[10.5px] text-slate-500 mt-2">Alle bedragen <b>excl. BTW</b>. Kostprijs = materiaal (aankoop) + (uren × tarief) → dit wordt van het projecttotaal afgetrokken. De <b>marge %</b> dient enkel om te berekenen wat je voor dat materiaal zou moeten vragen (richtprijs); ze wordt niet bij de winst opgeteld, want ze zit al in je offerte. Sleep met ⠿ om te herschikken.</p>
           </div>
 
           {/* Samenvatting: projecttotaal (offerte) vs. gefactureerde omzet → winst */}
@@ -1002,14 +1002,16 @@ function FicheModal({fiche, onClose, onSave, onDelete, nummersInGebruik}){
                 <div className="text-[11px] text-slate-400">− Materiaal &amp; werkuren (aankoop, excl.)</div><div className="font-display font-bold text-slate-200">{euro(r.kosten)}</div>
               </div>
               <div className="rounded-lg bg-bts-panel2 border border-dashed border-bts-line px-3 py-2">
-                <div className="text-[11px] text-slate-400">+ Marge op materiaal (winst)</div><div className="font-display font-bold text-slate-300">{euro(r.materiaalMarge)}</div>
+                <div className="text-[11px] text-slate-400">Richtprijs materiaal (aankoop + marge%)</div>
+                <div className="font-display font-bold text-slate-300">{euro(r.materiaalMetMarge)}</div>
+                <div className="text-[10px] text-slate-500">wv. marge {euro(r.materiaalMarge)}{r.arbeid>0?' · + uren '+euro(r.arbeid):''}</div>
               </div>
               <div className="rounded-lg px-3 py-2 border" style={{background:(r.winst>=0?'#25C167':'#EF4444')+'1a', borderColor:(r.winst>=0?'#25C167':'#EF4444')+'66'}}>
                 <div className="text-[11px]" style={{color:(r.winst>=0?'#7ee0a4':'#fca5a5')}}>= Verwachte winst · marge</div>
                 <div className="font-display font-bold" style={{color:(r.winst>=0?'#4ade80':'#f87171')}}>{euro(r.winst)} · {r.marge.toFixed(1)}%</div>
               </div>
             </div>
-            <p className="text-[10.5px] text-slate-500">Het <b>projecttotaal</b> is wat je offreerde. Er is pas <b>omzet</b> zodra je een voorschot of factuur invult hieronder — daarvoor is er niets verkocht. De <b>verwachte winst</b> is wat je overhoudt als het project volledig uitgevoerd en gefactureerd is.</p>
+            <p className="text-[10.5px] text-slate-500">Het <b>projecttotaal</b> is wat je offreerde. Er is pas <b>omzet</b> zodra je een voorschot of factuur invult hieronder. <b>Verwachte winst = projecttotaal − materiaalaankoop − werkuren.</b> Je marge% zit al in je offerteprijs, dus die wordt niet nog eens bijgeteld — de <b>richtprijs</b> toont enkel wat je materiaal met die marge zou moeten opbrengen, zodat je kan checken of je offerte klopt.</p>
           </div>
 
           {/* Facturatie & voorschotten */}
@@ -1518,8 +1520,8 @@ function App(){
                       <span className="text-[10px] text-slate-500">{j.aantal} fiches</span>
                     </div>
                     <div className="text-[11px] text-slate-400 mt-0.5">Gefactureerde omzet <b className="text-slate-200">{euro(j.omzet)}</b></div>
-                    <div className="text-[11px] text-slate-400">Verdiende materiaalmarge <b style={{color:'#4ade80'}}>{euro(j.verdiend)}</b></div>
-                    <div className="text-[11px] text-slate-500">Winst (op gefactureerd) <b style={{color:(j.winst>=0?'#7ee0a4':'#f87171')}}>{euro(j.winst)}</b></div>
+                    <div className="text-[11px] text-slate-500">wv. marge op materiaal <b style={{color:'#4ade80'}}>{euro(j.verdiend)}</b></div>
+                    <div className="text-[11px] text-slate-400">Winst (op gefactureerd) <b style={{color:(j.winst>=0?'#7ee0a4':'#f87171')}}>{euro(j.winst)}</b></div>
                   </div>
                 ))}
                 {perJaar.length===0 && <span className="text-sm text-slate-500">Nog geen data.</span>}
